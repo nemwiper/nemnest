@@ -21,6 +21,8 @@ dependencies = ["numpy>=1.24", "scipy>=1.10", "pillow>=9"]
 dynamic = ["version"]
 
 [project.optional-dependencies]
+# drag and drop of files onto the window
+gui = ["tkinterdnd2>=0.4"]
 # GPU acceleration of the placement search (NVIDIA, CUDA 12)
 gpu = ["cupy-cuda12x"]
 dev = ["pytest>=7"]

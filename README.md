@@ -22,6 +22,14 @@ This is young software. The placement is checked by automated tests on the real 
 
 A wrong print file can ruin a print or damage a vat film. Before the first print on your machine, **open the sliced file in your usual slicer and check the first layers and the settings**. You use this software at your own risk (see the licence).
 
+## Download for Windows
+
+No Python needed: download `nemnest-...-windows.zip` from the [latest release](https://github.com/nemwiper/nemnest/releases/latest), unzip it anywhere and run `nemnest.exe`. It opens [the window](#window), with drag and drop.
+
+- The program is not code-signed, so the first time Windows shows "Windows protected your PC": choose *More info*, then *Run anyway*.
+- It runs on the CPU. For GPU acceleration, the command line or the MCP server, install with Python as below.
+- To slice from the window, put mslicer's `slicer.exe` (see [Slicing](#slicing-optional)) in the same folder as `nemnest.exe`.
+
 ## Install
 
 Python 3.10 or newer.
@@ -64,13 +72,15 @@ nemnest gui
 
 ![The nemnest window](docs/window.png)
 
-A simple top view, one plate per screen, no 3D. Import STL files or a whole folder: parts are placed as they arrive, unrotated, and a new plate is opened when one no longer fits. Adding parts never moves the ones already placed.
+A simple top view, one plate per screen, no 3D. Import STL files or a whole folder, with the buttons or by dragging them onto the window: parts are placed as they arrive, unrotated, and a new plate is opened when one no longer fits. Adding parts never moves the ones already placed.
 
 - Move between plates with the mouse wheel, the arrow keys or Page Up / Page Down.
 - After each import a short summary tells you how many parts were added and how many plates there are.
 - **Optimise** rearranges everything on as few plates as possible (rotation and height grouping are options), with a progress bar, the best result so far and a Cancel button that keeps the current layout.
 - **Export plates** writes the merged plate STLs, previews and `layout.json`; **Export and slice** also produces the print files.
 - Pick the printer from the list, or **Add printer** to enter the plate size of your own.
+
+Drag and drop needs one small extra package: `pip install "nemnest[gui] @ git+https://github.com/nemwiper/nemnest"`, or just `pip install tkinterdnd2`. Without it the window works the same, with the buttons only.
 
 The window uses Tkinter, which comes with Python on Windows and macOS. On Debian/Ubuntu: `sudo apt install python3-tk python3-pil.imagetk`.
 

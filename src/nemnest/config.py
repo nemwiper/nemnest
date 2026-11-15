@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 from importlib import resources
 from pathlib import Path
 
@@ -144,11 +145,18 @@ def find_slicer(config: dict | None = None) -> str | None:
         found = shutil.which(name)
         if found:
             return found
+    if getattr(sys, "frozen", False):      # standalone program: a slicer placed next to it
+        for name in SLICER_NAMES:
+            for suffix in ("", ".exe"):
+                path = Path(sys.executable).parent / (name + suffix)
+                if path.is_file():
+                    return str(path)
     return None
 
 
 SLICER_HELP = (
     "The mslicer command-line slicer was not found. nemnest does not bundle it: build it from "
     "https://github.com/connorslade/mslicer (cargo build --release --package slicer --bin slicer) "
-    "and then run `nemnest config --slicer /path/to/slicer`, or set the NEMNEST_SLICER environment variable."
+    "and then run `nemnest config --slicer /path/to/slicer`, set the NEMNEST_SLICER environment variable, "
+    "or (standalone Windows program) put slicer.exe in the same folder as nemnest.exe."
 )

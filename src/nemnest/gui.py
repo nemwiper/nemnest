@@ -17,6 +17,7 @@ from pathlib import Path
 from . import __version__, config as cfg, nest
 
 HINT = "Add STL files to start"
+HINT_DROP = "Drop STL files or folders here"
 PHASES = {"placing": "Trying different orders", "pairing": "Pairing large parts",
           "height": "Grouping tall parts", "rafts": "Joining small rafts"}
 
@@ -64,6 +65,19 @@ class Session:
 
     def add_folder(self, folder, workers=None) -> int:
         return self.add_files(nest.list_stls(folder), workers)
+
+    def add_paths(self, paths, workers=None) -> int:
+        """Files and folders mixed, as they come from a drop: the STLs among
+        the files, and every STL directly inside each folder. Anything else
+        is ignored."""
+        files = []
+        for path in paths:
+            path = Path(path)
+            if path.is_dir():
+                files += nest.list_stls(path)
+            elif path.is_file() and path.suffix.lower() == ".stl":
+                files.append(path)
+        return self.add_files(files, workers)
 
     def remove(self, indices):
         drop = set(indices)
@@ -185,7 +199,14 @@ def main(argv=None) -> int:
         return 1
 
     session = Session()
-    root = tk.Tk()
+    try:                       # optional: drag and drop of files onto the window
+        from tkinterdnd2 import DND_FILES, TkinterDnD
+        root = TkinterDnD.Tk()
+        can_drop = True
+    except Exception:          # not installed, or its Tk extension does not load here
+        root = tk.Tk()
+        can_drop = False
+    hint = HINT_DROP if can_drop else HINT
     root.title(f"nemnest {__version__}")
     root.geometry("1180x720")
     root.minsize(820, 520)
@@ -228,7 +249,7 @@ def main(argv=None) -> int:
         strong.configure(weight="bold", size=strong.cget("size") + 2)
     except Exception:
         strong = None
-    status = tk.StringVar(value=HINT)
+    status = tk.StringVar(value=hint)
     prev_b = ttk.Button(foot, text="◀", width=3, command=lambda: go(-1))
     prev_b.pack(side="left")
     ttk.Label(foot, textvariable=plate_text, width=58, anchor="center", font=strong).pack(side="left")
@@ -248,7 +269,7 @@ def main(argv=None) -> int:
         canvas.delete("all")
         canvas.create_image(cw // 2, ch // 2, image=state["photo"])
         if not session.placements:
-            canvas.create_text(cw // 2, ch // 2, text=HINT, fill="#8a8f98", font=("TkDefaultFont", 14))
+            canvas.create_text(cw // 2, ch // 2, text=hint, fill="#8a8f98", font=("TkDefaultFont", 14))
 
     def refresh():
         n = session.n_plates
@@ -264,7 +285,7 @@ def main(argv=None) -> int:
             status.set(f"{len(session.placements)} parts on {n} plates, {mode}   ·   {session.printer['name']}")
         else:
             plate_text.set("No plates yet")
-            status.set(HINT if not session.files else "No part could be placed")
+            status.set(hint if not session.files else "No part could be placed")
         problems = [f"Does not fit the plate: {u['name']}" for u in session.unplaceable]
         problems += [f"Too tall for the printer: {name}" for name in session.too_tall]
         notes.set("\n".join(problems))
@@ -579,17 +600,30 @@ def main(argv=None) -> int:
     root.bind("<End>", lambda _e: go(0, absolute=session.n_plates - 1))
     tree.bind("<Delete>", lambda _e: remove_selected())
 
+    def dropped(event):
+        paths = root.tk.splitlist(event.data)
+        if not paths:
+            return
+        if state["busy"]:
+            status.set("Busy: drop the files again when this is done")
+            return
+        if not any(Path(p).is_dir() or str(p).lower().endswith(".stl") for p in paths):
+            status.set("Nothing to import: drop STL files or folders")
+            return
+        importing(lambda: session.add_paths(paths))
+    state["dropped"] = dropped        # also reachable without a real drag (tests)
+    if can_drop:
+        for widget in (root, canvas, tree):
+            widget.drop_target_register(DND_FILES)
+            widget.dnd_bind("<<Drop>>", dropped)
+
     def resized(_event):
         if state["resize"]:
             root.after_cancel(state["resize"])
         state["resize"] = root.after(120, draw)
     canvas.bind("<Configure>", resized)
 
-    for path in (argv or []):
-        if Path(path).is_dir():
-            session.add_folder(path)
-        else:
-            session.add_files([path])
+    session.add_paths(argv or [])
     if session.files:
         session.layout()
     root.after(50, refresh)

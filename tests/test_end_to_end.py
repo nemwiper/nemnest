@@ -285,3 +285,16 @@ def test_part_number_lands_on_the_part():
     i, j = nest.label_anchor(ring)
     assert ring[i, j] and not ring[30, 40]   # the bounding-box centre is in the hole
     assert min(i, 59 - i, j, 79 - j) >= 5
+
+
+def test_window_accepts_mixed_files_and_folders(workspace):
+    from nemnest import gui
+    models = workspace["models"]
+    other = workspace["work"] / "notes.txt"
+    other.write_text("not a model")
+    one = sorted(models.glob("box_*.stl"))[0]
+    s = gui.Session()
+    added = s.add_paths([str(one), str(other), str(models), str(workspace["work"] / "missing.stl")])
+    assert added == 1 + workspace["count"]        # the single file, then the whole folder; the rest ignored
+    s.layout()
+    assert len(s.placements) == added and sum(label.startswith(one.name) for label in s.labels()) == 2

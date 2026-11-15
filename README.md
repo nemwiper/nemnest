@@ -1,0 +1,156 @@
+# nemnest
+
+Auto-nesting of **pre-supported STLs** onto as few resin printer build plates as possible.
+
+Point it at a folder of supported models and it gives you back one merged STL per plate, a preview image of each plate, and (optionally) ready-to-print sliced files. It works from the command line and as an [MCP](https://modelcontextprotocol.io) server, so an AI assistant such as Claude can run the whole job for you.
+
+![Example plate preview](docs/plate_example.png)
+
+## What it does
+
+- **Nests on the real footprint**, not on bounding boxes, so parts interlock.
+- **Rotates around Z only**, so the supports that came with the model stay valid.
+- **Lets rafts overlap.** Geometry in the first millimetre counts as raft: rafts may overlap each other and slide under other parts, model bodies keep their distance.
+- **Optionally minimises print time**: with the same number of plates, tall parts are grouped together so short plates finish early.
+- **Attaches small rafts** to larger ones where possible, so tiny parts come off the plate in one piece with their neighbours.
+- **Slices** the plates with [mslicer](https://github.com/connorslade/mslicer) and fixes the `.goo` metadata (exposure schedule, print time, resin volume and weight).
+- Uses the GPU for the placement search when CuPy and an NVIDIA card are available; otherwise runs on the CPU.
+
+## Status and a word of caution
+
+This is young software. The placement is checked by automated tests on the real geometry, and the full chain (placement, slicing, printing) has been verified on real prints with **one printer: the Elegoo Saturn 4 Ultra 16K**. Other printers need a profile and someone to test it.
+
+A wrong print file can ruin a print or damage a vat film. Before the first print on your machine, **open the sliced file in your usual slicer and check the first layers and the settings**. You use this software at your own risk (see the licence).
+
+## Install
+
+Python 3.10 or newer.
+
+```bash
+pip install git+https://github.com/nemwiper/nemnest
+```
+
+GPU acceleration (optional, NVIDIA with CUDA 12):
+
+```bash
+pip install cupy-cuda12x
+```
+
+### Slicing (optional)
+
+Arranging plates needs nothing else. To also slice them, nemnest drives the mslicer command-line slicer, which is a separate program under its own licence (GPL-3.0) and is not bundled. Build it with [Rust](https://rustup.rs):
+
+```bash
+git clone --depth 1 --branch v0.10.1 https://github.com/connorslade/mslicer
+```
+
+```bash
+cd mslicer && cargo build --release --package slicer --bin slicer
+```
+
+Then tell nemnest where the binary is (`target/release/slicer`, or `slicer.exe` on Windows):
+
+```bash
+nemnest config --slicer /path/to/mslicer/target/release/slicer
+```
+
+nemnest was developed against mslicer v0.10.1.
+
+## Command line
+
+```bash
+nemnest scan ./my_model/supported
+```
+
+```bash
+nemnest arrange ./my_model/supported -o ./plates --optimize-height
+```
+
+```bash
+nemnest slice ./plates --exposure 2.5 --first-exposure 30
+```
+
+`arrange` writes `plate_01.stl`, `plate_01.png`, ... and `layout.json` to the output folder. Existing `plate_NN.*` files there are replaced.
+
+Useful options of `arrange`:
+
+| Option | Meaning |
+|---|---|
+| `-x "*water*"` | leave out files matching a pattern (repeatable) |
+| `--no-stl` | placement only: previews and `layout.json`, quick to review |
+| `--optimize-height` | group tall parts to cut total print time, never adding plates |
+| `--gap 2` | minimum distance between parts, mm |
+| `--edge 1` | minimum distance from the plate edge, mm |
+| `--raft-height 1` | thickness treated as raft; `0` turns raft overlap off |
+| `--rotation-step 45` | Z rotation step in degrees; `0` keeps the original orientation |
+| `--copies orc.stl=3` | print several copies of a file |
+| `--attempts 40 --time-limit 200` | search longer for a better result |
+| `--cpu` / `--gpu` | force the backend |
+
+After reviewing a `--no-stl` layout, `nemnest export ./plates` writes the plate STLs without redoing the search. `printers`, `scan`, `arrange`, `export` and `slice` accept `--json` for machine-readable output, and `nemnest <command> --help` lists everything.
+
+Exposure settings come from the printer profile and are only a starting point: **use the values for your resin**.
+
+## With an AI assistant (MCP)
+
+`nemnest mcp` runs an MCP server on stdin/stdout with the tools `list_printers`, `scan_folder`, `arrange_plates`, `export_plates` and `slice_plates`.
+
+Claude Code:
+
+```bash
+claude mcp add nemnest -- nemnest mcp
+```
+
+Claude Desktop and other clients, in the MCP servers configuration:
+
+```json
+{
+  "mcpServers": {
+    "nemnest": { "command": "nemnest", "args": ["mcp"] }
+  }
+}
+```
+
+Then ask in plain words, for example: *"Arrange the STLs in this folder on as few plates as possible, leave out the water effects, and show me the previews before slicing."* Placement of many large models can take a few minutes, so raise the client's tool timeout if it is short.
+
+## Printers
+
+```bash
+nemnest printers
+```
+
+| Profile | Build volume | Resolution | Status |
+|---|---|---|---|
+| `elegoo-saturn-4-ultra-16k` | 211.68 x 118.37 x 220 mm | 15120 x 6230 | tested on real prints |
+
+To use another printer for **arranging only**, the plate size is enough:
+
+```bash
+nemnest arrange ./supported --plate-size 218.88 122.88 260
+```
+
+To add a printer properly, copy [the Saturn profile](src/nemnest/printers/elegoo-saturn-4-ultra-16k.json) into your user printers folder (shown by `nemnest printers`), change name, `size_mm`, `resolution_px` and the slicing defaults, then select it with `nemnest config --printer your-id`. The `goo_profile` block holds the `.goo` metadata the manufacturer's slicer writes for that machine (mirroring, per-layer settings, the seconds of mechanical motion per layer used for the time estimate); the reliable way to fill it is to slice the same plate with the manufacturer's slicer and compare.
+
+Profiles verified on real prints are very welcome as pull requests. Please say in the PR what you printed and with which firmware.
+
+## How it works
+
+Each model is projected onto the plate as a raster footprint (0.5 mm cells), split into a raft mask and a body mask. For every candidate rotation, all collision-free positions on a plate are found at once with an FFT cross-correlation of the footprint against the occupied area. Parts are placed first-fit in several different orders, followed by a search that tries to empty the least-used plates, an exact pairing step for large parts, and the optional height and raft passes. Footprints are cached per file, so repeating a run on the same models is fast.
+
+The merged plate STL is then sliced by mslicer, shifted down by half a layer so that each layer is sampled at mid-thickness like the manufacturers' slicers do (otherwise the first layer misses most of the raft).
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+```
+
+```bash
+pytest
+```
+
+The tests generate synthetic models, arrange them through the MCP server and the command line, and measure the distances on the transformed geometry.
+
+## Licence
+
+MIT, see [LICENSE](LICENSE). mslicer is a separate project by Connor Slade, licensed GPL-3.0; nemnest only runs it as an external program.

@@ -1,0 +1,30 @@
+{
+  "id": "elegoo-saturn-4-ultra-16k",
+  "name": "Elegoo Saturn 4 Ultra 16K",
+  "tested": true,
+  "notes": "Verified on real prints. Tilting-vat printer: lift/retract fields are ignored by the firmware. Exposure values are a starting point for a standard 0.05 mm resin profile: use the ones for your resin.",
+  "size_mm": [211.68, 118.37, 220.0],
+  "resolution_px": [15120, 6230],
+  "formats": ["goo"],
+  "slice_defaults": {
+    "layer_height_mm": 0.05,
+    "first_layers": 5,
+    "first_exposure_time_s": 30.0,
+    "exposure_time_s": 2.2,
+    "transition_layers": 10,
+    "wait_before_cure_s": 1.2,
+    "first_wait_before_cure_s": 1.2
+  },
+  "goo_profile": {
+    "printer_name": "ELEGOO Saturn 4 Ultra 16K",
+    "profile_name": "nemnest",
+    "x_mirror": false,
+    "y_mirror": true,
+    "per_layer_settings": false,
+    "grey_scale_level": 0,
+    "motion_value": 0.05,
+    "pause_position_z": 200.0,
+    "motion_s_per_layer": 2.59,
+    "resin_density_g_ml": 1.15
+  }
+}

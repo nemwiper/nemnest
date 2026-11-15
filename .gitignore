@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# generated plates and print files
+plates/
+*.goo
+*.ctb
+*.nanodlp
+
+# local assistant settings
+.mcp.json
+.claude/

@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nemnest"
+description = "Auto-nesting of pre-supported STLs onto as few resin printer build plates as possible, with a command line and an MCP server."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "nemwiper" }]
+keywords = ["3d-printing", "resin", "msla", "nesting", "stl", "slicer", "mcp", "elegoo"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
+dependencies = ["numpy>=1.24", "scipy>=1.10", "pillow>=9"]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+# GPU acceleration of the placement search (NVIDIA, CUDA 12)
+gpu = ["cupy-cuda12x"]
+dev = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/nemwiper/nemnest"
+Issues = "https://github.com/nemwiper/nemnest/issues"
+
+[project.scripts]
+nemnest = "nemnest.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "nemnest.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+nemnest = ["printers/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

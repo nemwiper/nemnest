@@ -1,4 +1,4 @@
-"""Command line: `nemnest scan|arrange|export|slice|printers|config|mcp`."""
+"""Command line: `nemnest scan|arrange|export|slice|printers|config|gui|mcp`."""
 from __future__ import annotations
 
 import argparse
@@ -102,6 +102,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--printer", help="set the default printer profile")
     p.add_argument("--slicer", help="set the path of the mslicer command-line slicer")
     p.add_argument("--optimize-height", choices=["on", "off"], help="set the default for height optimisation")
+
+    p = sub.add_parser("gui", help="open the window: import STLs and see the plates from above")
+    p.add_argument("paths", nargs="*", help="STL files or folders to load at start")
 
     sub.add_parser("mcp", help="run as an MCP server on stdin/stdout (for AI assistants)")
     return parser
@@ -216,6 +219,9 @@ def cmd_config(ns, server):
 
 def main(argv=None) -> int:
     ns = build_parser().parse_args(argv)
+    if ns.command == "gui":
+        from . import gui
+        return gui.main(ns.paths)
     from . import server   # imported late: pulls in numpy/scipy
     if ns.command == "mcp":
         server.main()

@@ -200,3 +200,63 @@ def test_slice_without_slicer_explains(workspace, monkeypatch):
     from nemnest import server
     with pytest.raises(RuntimeError, match="mslicer"):
         server.tool_slice_plates({"plates_dir": str(workspace["work"] / "plates_mcp")})
+
+
+def test_window_session_places_in_arrival_order(workspace):
+    from nemnest import gui
+    files = sorted(str(p) for p in workspace["models"].iterdir())
+    s = gui.Session()
+    s.add_files(files[:10])
+    s.layout()
+    first = [(it.label, it.plate, it.i, it.j) for it in s.placements]
+    s.add_files(files[10:])
+    s.layout()
+    now = [(it.label, it.plate, it.i, it.j) for it in s.placements]
+    assert now[:10] == first                                    # adding parts never moves earlier ones
+    assert [it.label for it in s.placements] == s.labels()       # arrival order
+    assert {it.theta for it in s.placements} == {0.0}            # unrotated
+    plates = [it.plate for it in s.placements]
+    assert plates == sorted(plates) and s.n_plates > 1           # a new plate only when the last is full
+    assert s.render(0, 3.0).size[0] > 100
+    in_order = s.n_plates
+    s.layout(optimise=True, time_limit=20, gpu=False)
+    assert s.n_plates <= in_order and len(s.placements) == len(files)
+    out = workspace["work"] / "plates_gui"
+    result = s.export(out)
+    assert result["placed"] == len(files) and (out / "plate_01.stl").is_file()
+    assert measure_layout(json.loads((out / "layout.json").read_text(encoding="utf-8")))[0] >= GAP - 0.75
+    s.remove([0, 1])
+    s.layout()
+    assert len(s.placements) == len(files) - 2
+
+
+def test_window_add_printer(workspace):
+    from nemnest import gui
+    profile = gui.save_printer("My Test Printer 8K", ["218.88", "122.88", "250"], ["7680", "4320"])
+    assert profile["id"] == "my-test-printer-8k"
+    assert cfg.resolve_printer("my-test-printer-8k")["size_mm"] == [218.88, 122.88, 250.0]
+    with pytest.raises(ValueError):
+        gui.save_printer("", [1, 2, 3])
+    with pytest.raises(ValueError):
+        gui.save_printer("bad", ["x", 2, 3])
+
+
+def test_window_optimise_reports_progress_and_can_be_cancelled(workspace):
+    from nemnest import gui
+    s = gui.Session()
+    s.add_folder(workspace["models"])
+    s.layout()
+    before = [(it.label, it.plate, it.i, it.j) for it in s.placements]
+    seen = []
+    s.layout(optimise=True, time_limit=20, gpu=False, progress=seen.append)
+    fractions = [gui.progress_fraction(info) for info in seen]
+    assert seen and all(0.0 <= f <= 1.0 for f in fractions) and seen[-1]["plates"] == s.n_plates
+    assert s.optimised
+
+    s.layout()                                   # back to arrival order
+
+    def cancel(_info):
+        raise gui.Cancelled()
+    with pytest.raises(gui.Cancelled):
+        s.layout(optimise=True, time_limit=20, gpu=False, progress=cancel)
+    assert [(it.label, it.plate, it.i, it.j) for it in s.placements] == before and not s.optimised

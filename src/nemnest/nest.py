@@ -376,8 +376,17 @@ class _Plate:
 
 def pack(parts, labels, plate_w, plate_d, res, gap, edge, angles,
          attempts=12, time_limit=60.0, seed=0, improve=True, gpu="auto",
-         optimize_height=False, attach_small=False, small_raft_mm2=1200.0, attach_min_mm2=10.0):
+         optimize_height=False, attach_small=False, small_raft_mm2=1200.0, attach_min_mm2=10.0,
+         fixed_order=False, progress=None):
     """Arrange the parts onto the smallest number of plates found.
+
+    With `fixed_order` nothing is searched: parts are placed one after the
+    other in the given order, each on the current plate, opening a new plate
+    when one does not fit. Adding parts at the end never moves the earlier ones.
+
+    `progress`, if given, is called a few times per second with a dict (phase,
+    attempt, attempts, plates, phase_elapsed, phase_limit). It may raise to
+    abort the search: the exception propagates to the caller.
 
     Returns (placements, n_plates, unplaceable_labels, grid) where grid describes
     the grid used (origin in plate coordinates, pitch, growth).
@@ -484,8 +493,25 @@ def pack(parts, labels, plate_w, plate_d, res, gap, edge, angles,
     min_area = {p.path: min(v[3] for v in cache[p.path]) for p, _ in todo}
     lower = max(1, math.ceil(sum(min_area[p.path] for p, _ in todo) / (hg * wg)))
 
+    track = {"phase": "placing", "attempt": 0, "plates": None, "t0": time.time(), "limit": time_limit, "last": 0.0}
+
+    def tick(force=False, **changes):
+        """Report progress (throttled); a change of phase restarts its clock."""
+        if changes.get("phase", track["phase"]) != track["phase"]:
+            track["t0"] = time.time()
+        track.update(changes)
+        if progress is None:
+            return
+        now = time.time()
+        if force or now - track["last"] >= 0.1:
+            track["last"] = now
+            progress({"phase": track["phase"], "attempt": track["attempt"], "attempts": max(1, attempts),
+                      "plates": track["plates"], "phase_elapsed": now - track["t0"],
+                      "phase_limit": track["limit"]})
+
     def try_place(pl, p, label):
         """Place p on the plate, leaving the parts already there untouched."""
+        tick()
         if pl.used + min_area[p.path] > hg * wg:
             return False
         best = None
@@ -541,6 +567,18 @@ def pack(parts, labels, plate_w, plate_d, res, gap, edge, angles,
         x, y = pl[0].hull[:, 0], pl[0].hull[:, 1]
         return 0.5 * abs(float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
 
+    if fixed_order:
+        plates = []
+        for p, label in todo:
+            if not plates or not try_place(plates[-1], p, label):
+                plates.append(new_plate([(p, label)]))
+        for k, pl in enumerate(plates):
+            for it in pl.items:
+                it.plate = k
+        grid = dict(gx0=gx0, gy0=gy0, res=res, grow=g, hg=hg, wg=wg, lower_bound=lower, attempts=1,
+                    stats={"backend": "GPU (CuPy)" if cp is not None else "CPU", "fixed_order": True})
+        return [it for pl in plates for it in pl.items], len(plates), unplaceable, grid
+
     orders = [
         sorted(todo, key=lambda t: -t[0].area),
         sorted(todo, key=lambda t: -hull_area(t)),
@@ -561,6 +599,7 @@ def pack(parts, labels, plate_w, plate_d, res, gap, edge, angles,
         tried += 1
         if best is None or quality(plates) < quality(best):
             best = plates
+        tick(force=True, attempt=n + 1, plates=len(best))
         if len(best) <= lower or time.time() - start > time_limit:
             break
     greedy_count = len(best)
@@ -723,6 +762,7 @@ def pack(parts, labels, plate_w, plate_d, res, gap, edge, angles,
         return plates
 
     if improve and len(best) > lower and len(todo) > 1:
+        tick(force=True, phase="pairing", limit=max(1.0, time_limit - (time.time() - start)))
         # matching: as many compatible pairs as possible
         edges = [(x, y) for x in range(len(todo)) for y in range(x + 1, len(todo))
                  if may_pair(todo[x][0], todo[y][0])]
@@ -760,6 +800,20 @@ def pack(parts, labels, plate_w, plate_d, res, gap, edge, angles,
         if not out_of_time():
             candidates.append(eliminate(best))
         best = min(candidates, key=quality)
+
+        # Whether a plate can be emptied depends on the arrangement the search
+        # starts from. While there is time left, start again from new random
+        # orders; give up after several restarts in a row that save no plate.
+        restarts = stale = 0
+        while len(best) > lower and stale < 8 and time.time() - start < time_limit:
+            size_of = hull_area if restarts % 2 else (lambda t: t[0].area)
+            cand = eliminate(run(sorted(todo, key=lambda t: -size_of(t) * rng.uniform(0.5, 1.5))))
+            restarts += 1
+            stale = 0 if len(cand) < len(best) else stale + 1
+            if quality(cand) < quality(best):
+                best = cand
+            tick(force=True, plates=len(best))
+        stats["restarts"] = restarts
 
     # ---- optional: for the same number of plates, group the tall parts to reduce
     # ---- the sum of the plate heights (i.e. the total print time)
@@ -855,6 +909,7 @@ def pack(parts, labels, plate_w, plate_d, res, gap, edge, angles,
         return plates
 
     if optimize_height and len(best) > 1:
+        tick(force=True, phase="height", plates=len(best), limit=max(60.0, time_limit))
         t_h = time.time()
         deadline = t_h + max(60.0, time_limit)
         stats["height_sum_before_mm"] = round(total_h(best), 1)
@@ -956,6 +1011,7 @@ def pack(parts, labels, plate_w, plate_d, res, gap, edge, angles,
         return out, report
 
     if attach_small:
+        tick(force=True, phase="rafts", plates=len(best), limit=5.0)
         best, stats["raft_attach"] = attach_rafts(best)
 
     stats["search_s"] = round(time.time() - start, 1)
@@ -1038,7 +1094,8 @@ PALETTE = [(230, 97, 80), (86, 156, 214), (120, 190, 110), (232, 180, 70), (160,
            (70, 190, 190), (225, 130, 180), (150, 150, 90), (240, 140, 60), (110, 130, 230)]
 
 
-def write_preview(path, items, grid, plate_w, plate_d, scale=4) -> None:
+def render_preview(items, grid, plate_w, plate_d, scale=4):
+    """Top view of a plate as a PIL image: rafts dimmed, bodies solid, parts numbered."""
     res = grid["res"]
     w = int(round(plate_w * scale))
     h = int(round(plate_d * scale))
@@ -1066,7 +1123,11 @@ def write_preview(path, items, grid, plate_w, plate_d, scale=4) -> None:
     for x, y, t in labels:
         draw.text((x, y), t, fill=(255, 255, 255), font=font, anchor="mm", stroke_width=2, stroke_fill=(0, 0, 0))
     draw.rectangle([0, 0, w - 1, h - 1], outline=(200, 200, 200))
-    img.save(path)
+    return img
+
+
+def write_preview(path, items, grid, plate_w, plate_d, scale=4) -> None:
+    render_preview(items, grid, plate_w, plate_d, scale).save(path)
 
 
 def list_stls(folder, exclude=None) -> list:
@@ -1091,10 +1152,11 @@ def list_stls(folder, exclude=None) -> list:
 def arrange(folder, output_dir, printer, gap=2.0, edge=1.0, rotation_step=45.0,
             res=0.5, copies=None, attempts=12, time_limit=60.0, exclude=None,
             write_stl=True, raft_height=1.0, gpu="auto", workers=None, optimize_height=False,
-            attach_small_rafts=False, small_raft_mm2=1200.0, attach_min_mm2=10.0) -> dict:
+            attach_small_rafts=False, small_raft_mm2=1200.0, attach_min_mm2=10.0,
+            files=None, fixed_order=False) -> dict:
     """Read the STLs in the folder, nest them and write plates, previews and layout.json."""
     copies = copies or {}
-    files = list_stls(folder, exclude)
+    files = [Path(f) for f in files] if files is not None else list_stls(folder, exclude)
     if not files:
         raise ValueError(f"No .stl files in {folder}")
     plate_w, plate_d, plate_h = printer["size_mm"]
@@ -1120,8 +1182,21 @@ def arrange(folder, output_dir, printer, gap=2.0, edge=1.0, rotation_step=45.0,
         parts, labels, plate_w, plate_d, res, gap, edge, angles, attempts, time_limit, gpu=gpu,
         optimize_height=optimize_height,
         attach_small=bool(attach_small_rafts) and raft_height > 0, small_raft_mm2=small_raft_mm2,
-        attach_min_mm2=attach_min_mm2)
+        attach_min_mm2=attach_min_mm2, fixed_order=fixed_order)
+    settings = {"gap_mm": gap, "edge_margin_mm": edge, "rotation_step_deg": step,
+                "resolution_mm": res, "raft_height_mm": raft_height,
+                "optimize_height": bool(optimize_height),
+                "attach_small_rafts": bool(attach_small_rafts), "small_raft_mm2": small_raft_mm2,
+                "fixed_order": bool(fixed_order)}
+    return write_layout(output_dir, printer, placements, n_plates, grid, settings, models=len(parts),
+                        unplaceable=unplaceable, too_tall=too_tall, load_s=t_load, write_stl=write_stl)
 
+
+def write_layout(output_dir, printer, placements, n_plates, grid, settings, models=None,
+                 unplaceable=(), too_tall=(), load_s=0.0, write_stl=True) -> dict:
+    """Write previews, layout.json and (optionally) the merged plate STLs of a
+    placement computed by `pack`."""
+    plate_w, plate_d, _plate_h = printer["size_mm"]
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     # only files this tool writes (plate_NN.ext): anything else is left alone
@@ -1168,11 +1243,8 @@ def arrange(folder, output_dir, printer, gap=2.0, edge=1.0, rotation_step=45.0,
         })
     result = {
         "printer": printer,
-        "settings": {"gap_mm": gap, "edge_margin_mm": edge, "rotation_step_deg": step,
-                     "resolution_mm": res, "raft_height_mm": raft_height,
-                     "optimize_height": bool(optimize_height),
-                     "attach_small_rafts": bool(attach_small_rafts), "small_raft_mm2": small_raft_mm2},
-        "models": len(parts),
+        "settings": settings,
+        "models": len(placements) if models is None else models,
         "plates_count": n_plates,
         "height_sum_mm": round(sum(max(it.part.size[2] for it in placements if it.plate == k)
                                    for k in range(n_plates)), 1),
@@ -1180,10 +1252,10 @@ def arrange(folder, output_dir, printer, gap=2.0, edge=1.0, rotation_step=45.0,
         "area_lower_bound": grid.get("lower_bound"),
         "attempts": grid.get("attempts"),
         "search": grid.get("stats"),
-        "load_s": round(t_load, 1),
+        "load_s": round(load_s, 1),
         "plates": plates,
-        "does_not_fit": unplaceable,
-        "too_tall": too_tall,
+        "does_not_fit": list(unplaceable),
+        "too_tall": list(too_tall),
     }
     (out / "layout.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     return result

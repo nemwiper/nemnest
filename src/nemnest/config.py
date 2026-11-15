@@ -19,6 +19,7 @@ DEFAULTS = {
     "attach_small_rafts": True,
     "small_raft_mm2": 1200.0,
     "attach_min_mm2": 10.0,
+    "gui_import_summary": True,
     "slice_defaults": {},
     "goo_profile": {},
 }

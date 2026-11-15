@@ -56,6 +56,24 @@ nemnest config --slicer /path/to/mslicer/target/release/slicer
 
 nemnest was developed against mslicer v0.10.1.
 
+## Window
+
+```bash
+nemnest gui
+```
+
+![The nemnest window](docs/window.png)
+
+A simple top view, one plate per screen, no 3D. Import STL files or a whole folder: parts are placed as they arrive, unrotated, and a new plate is opened when one no longer fits. Adding parts never moves the ones already placed.
+
+- Move between plates with the mouse wheel, the arrow keys or Page Up / Page Down.
+- After each import a short summary tells you how many parts were added and how many plates there are.
+- **Optimise** rearranges everything on as few plates as possible (rotation and height grouping are options), with a progress bar, the best result so far and a Cancel button that keeps the current layout.
+- **Export plates** writes the merged plate STLs, previews and `layout.json`; **Export and slice** also produces the print files.
+- Pick the printer from the list, or **Add printer** to enter the plate size of your own.
+
+The window uses Tkinter, which comes with Python on Windows and macOS. On Debian/Ubuntu: `sudo apt install python3-tk python3-pil.imagetk`.
+
 ## Command line
 
 ```bash

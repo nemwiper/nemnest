@@ -32,6 +32,9 @@ Issues = "https://github.com/nemwiper/nemnest/issues"
 [project.scripts]
 nemnest = "nemnest.cli:main"
 
+[project.gui-scripts]
+nemnest-gui = "nemnest.gui:main"
+
 [tool.setuptools.dynamic]
 version = { attr = "nemnest.__version__" }
 

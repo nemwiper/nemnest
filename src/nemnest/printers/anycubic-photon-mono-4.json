@@ -1,0 +1,18 @@
+{
+  "id": "anycubic-photon-mono-4",
+  "name": "Anycubic Photon Mono 4",
+  "tested": false,
+  "notes": "Arranging only: not tested on a real machine. Export the plates and slice them with your usual slicer.",
+  "size_mm": [
+    153.4,
+    87.0,
+    165.0
+  ],
+  "resolution_px": [
+    9024,
+    5120
+  ],
+  "formats": [],
+  "native_format": ".pm4n",
+  "source": "https://store.anycubic.com/products/photon-mono-4"
+}

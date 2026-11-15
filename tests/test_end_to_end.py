@@ -138,8 +138,16 @@ def workspace(tmp_path_factory):
 def test_printer_profiles():
     printers = cfg.list_printers()
     assert "elegoo-saturn-4-ultra-16k" in printers
+    assert len(printers) > 30
     for pid, p in printers.items():
-        assert len(p["size_mm"]) == 3 and len(p["resolution_px"]) == 2, pid
+        assert len(p["size_mm"]) == 3 and p["size_mm"][0] >= p["size_mm"][1] > 0, pid
+        assert p["id"] == pid and p["name"], pid
+        if p.get("resolution_px"):
+            assert len(p["resolution_px"]) == 2 and p["resolution_px"][0] > p["resolution_px"][1], pid
+            pitch = [mm / px for mm, px in zip(p["size_mm"], p["resolution_px"])]
+            assert all(0.012 < v < 0.06 for v in pitch), (pid, pitch)   # a typo in a size shows up here
+        if not p.get("tested"):
+            assert not p.get("formats") and not p.get("goo_profile"), pid   # arranging only
     assert cfg.resolve_printer("Elegoo Saturn 4 Ultra 16K")["id"] == "elegoo-saturn-4-ultra-16k"
     with pytest.raises(ValueError):
         cfg.resolve_printer("no-such-printer")
@@ -192,6 +200,14 @@ def test_cli_arrange_and_export(workspace, capsys):
     assert cli.main(["export", str(out), "--plates", "1"]) == 0
     assert (out / "plate_01.stl").is_file()
     assert cli.main(["scan", str(workspace["work"] / "missing")]) == 1
+
+
+def test_untested_printer_is_arranging_only(workspace):
+    from nemnest import server
+    with pytest.raises(ValueError, match="arranging only"):
+        server.tool_slice_plates({"plates_dir": str(workspace["work"] / "plates_mcp"), "printer": "elegoo-saturn-3-ultra"})
+    scan = server.tool_scan_folder({"folder": str(workspace["models"]), "printer": "Phrozen Sonic Mini 8K"})
+    assert scan["plate_area_mm2"] == pytest.approx(165 * 71.28, abs=0.1)
 
 
 def test_slice_without_slicer_explains(workspace, monkeypatch):
@@ -260,3 +276,12 @@ def test_window_optimise_reports_progress_and_can_be_cancelled(workspace):
     with pytest.raises(gui.Cancelled):
         s.layout(optimise=True, time_limit=20, gpu=False, progress=cancel)
     assert [(it.label, it.plate, it.i, it.j) for it in s.placements] == before and not s.optimised
+
+
+def test_part_number_lands_on_the_part():
+    ring = np.zeros((60, 80), bool)
+    ring[5:55, 5:75] = True
+    ring[15:45, 15:75] = False            # a horseshoe open to the right
+    i, j = nest.label_anchor(ring)
+    assert ring[i, j] and not ring[30, 40]   # the bounding-box centre is in the hole
+    assert min(i, 59 - i, j, 79 - j) >= 5

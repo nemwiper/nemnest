@@ -118,7 +118,7 @@ def cmd_printers(ns, server):
         mark = "*" if p["id"] == res["configured"] else " "
         size = " x ".join(f"{v:g}" for v in p["size_mm"])
         px = " x ".join(str(v) for v in p["resolution_px"]) if p["resolution_px"] else "-"
-        print(f"{mark} {p['id']:<32} {size} mm   {px} px   {'tested' if p['tested'] else 'untested'}")
+        print(f"{mark} {p['id']:<32} {size} mm   {px} px   {'tested, slicing' if p['tested'] else 'arranging only'}")
     print(f"\n* = default. Add your own profiles in {res['user_printers_dir']}")
 
 

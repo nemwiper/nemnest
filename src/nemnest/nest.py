@@ -1094,6 +1094,16 @@ PALETTE = [(230, 97, 80), (86, 156, 214), (120, 190, 110), (232, 180, 70), (160,
            (70, 190, 190), (225, 130, 180), (150, 150, 90), (240, 140, 60), (110, 130, 230)]
 
 
+def label_anchor(mask) -> tuple:
+    """(row, column) of the cell deepest inside the footprint: the centre of
+    the largest circle that fits in it. Unlike the centre of the bounding box
+    it always lies on the part, also for rings, horseshoes and L shapes."""
+    padded = np.pad(np.asarray(mask, dtype=bool), 1)
+    depth = ndimage.distance_transform_edt(padded)
+    i, j = np.unravel_index(int(np.argmax(depth)), depth.shape)
+    return int(i) - 1, int(j) - 1
+
+
 def render_preview(items, grid, plate_w, plate_d, scale=4):
     """Top view of a plate as a PIL image: rafts dimmed, bodies solid, parts numbered."""
     res = grid["res"]
@@ -1119,7 +1129,9 @@ def render_preview(items, grid, plate_w, plate_d, scale=4):
         img.paste(tuple(v // 2 for v in color), (left, top), raft)   # raft: semi-transparent
         solid = Image.fromarray((body[::-1] * 255).astype(np.uint8)).resize(size, Image.NEAREST)
         img.paste(color, (left, top), solid)
-        labels.append((left + size[0] // 2, top + size[1] // 2, str(n + 1)))
+        li, lj = label_anchor(body if body.any() else m)
+        labels.append((left + int(round((lj + 0.5) * res * scale)),
+                       top + int(round((m.shape[0] - li - 0.5) * res * scale)), str(n + 1)))
     for x, y, t in labels:
         draw.text((x, y), t, fill=(255, 255, 255), font=font, anchor="mm", stroke_width=2, stroke_fill=(0, 0, 0))
     draw.rectangle([0, 0, w - 1, h - 1], outline=(200, 200, 200))

@@ -1,0 +1,18 @@
+{
+  "id": "elegoo-mars-3",
+  "name": "Elegoo Mars 3",
+  "tested": false,
+  "notes": "Arranging only: not tested on a real machine. Export the plates and slice them with your usual slicer. Official page no longer online; figures from UVtools and retailers.",
+  "size_mm": [
+    143.43,
+    89.6,
+    175.0
+  ],
+  "resolution_px": [
+    4098,
+    2560
+  ],
+  "formats": [],
+  "native_format": ".ctb (encrypted)",
+  "source": "https://github.com/sn4k3/UVtools/tree/master/PrusaSlicer/printer"
+}

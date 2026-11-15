@@ -24,6 +24,8 @@ def printer_from(args: dict, config: dict | None = None) -> dict:
         profile["size_mm"] = [float(v) for v in args["plate_size_mm"]]
         profile["name"] = "custom"
         profile["id"] = "custom"
+        for key in ("goo_profile", "formats", "tested", "notes"):   # they belong to the other machine
+            profile.pop(key, None)
     if args.get("plate_resolution_px"):
         profile["resolution_px"] = [int(v) for v in args["plate_resolution_px"]]
     return profile
@@ -241,7 +243,12 @@ def tool_slice_plates(args):
     printer = printer_from(args, config)
     # settings: printer profile < user's config < this call
     args = {**printer.get("slice_defaults", {}), **config.get("slice_defaults", {}), **args}
-    fmt = args.get("format") or (printer.get("formats") or ["goo"])[0]
+    if not args.get("format") and not printer.get("formats"):
+        raise ValueError(
+            f"The printer profile \"{printer.get('name', printer.get('id'))}\" is for arranging only: nemnest has no "
+            "verified slicing settings for it. Slice the exported plate_NN.stl files with your usual slicer, "
+            "or pass an explicit format (goo, ctb, nanodlp) to try mslicer at your own risk.")
+    fmt = args.get("format") or printer["formats"][0]
     goo_profile = {**printer.get("goo_profile", {}), **config.get("goo_profile", {})}
     exe = cfg.find_slicer(config)
     if not exe:

@@ -1,0 +1,18 @@
+{
+  "id": "anycubic-photon-mono-m7-pro",
+  "name": "Anycubic Photon Mono M7 Pro",
+  "tested": false,
+  "notes": "Arranging only: not tested on a real machine. Export the plates and slice them with your usual slicer. Anycubic's store page says 13320 px wide, its wiki and UVtools say 13312. Size is not in dispute.",
+  "size_mm": [
+    223.0,
+    126.0,
+    230.0
+  ],
+  "resolution_px": [
+    13312,
+    5120
+  ],
+  "formats": [],
+  "native_format": ".pwsz",
+  "source": "https://wiki.anycubic.com/en/resin-3d-printer/photon-mono-m7-pro/faq"
+}

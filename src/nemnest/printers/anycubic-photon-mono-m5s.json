@@ -1,0 +1,18 @@
+{
+  "id": "anycubic-photon-mono-m5s",
+  "name": "Anycubic Photon Mono M5s",
+  "tested": false,
+  "notes": "Arranging only: not tested on a real machine. Export the plates and slice them with your usual slicer. Anycubic states 218 x 123; Y is the exact LCD area from UVtools. Non-square pixels (19 x 24 um).",
+  "size_mm": [
+    218.0,
+    122.88,
+    200.0
+  ],
+  "resolution_px": [
+    11520,
+    5120
+  ],
+  "formats": [],
+  "native_format": ".pm5s",
+  "source": "https://store.anycubic.com/products/photon-mono-m5s"
+}

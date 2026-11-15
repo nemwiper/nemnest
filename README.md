@@ -18,7 +18,7 @@ Point it at a folder of supported models and it gives you back one merged STL pe
 
 ## Status and a word of caution
 
-This is young software. The placement is checked by automated tests on the real geometry, and the full chain (placement, slicing, printing) has been verified on real prints with **one printer: the Elegoo Saturn 4 Ultra 16K**. Other printers need a profile and someone to test it.
+This is young software. The placement is checked by automated tests on the real geometry, and the full chain (placement, slicing, printing) has been verified on real prints with **one printer: the Elegoo Saturn 4 Ultra 16K**. Profiles for 36 other popular printers are included for arranging only: slicing for them is not verified.
 
 A wrong print file can ruin a print or damage a vat film. Before the first print on your machine, **open the sliced file in your usual slicer and check the first layers and the settings**. You use this software at your own risk (see the licence).
 
@@ -137,11 +137,25 @@ Then ask in plain words, for example: *"Arrange the STLs in this folder on as fe
 nemnest printers
 ```
 
-| Profile | Build volume | Resolution | Status |
-|---|---|---|---|
-| `elegoo-saturn-4-ultra-16k` | 211.68 x 118.37 x 220 mm | 15120 x 6230 | tested on real prints |
+37 profiles are included. One is **tested on real prints, slicing included**:
 
-To use another printer for **arranging only**, the plate size is enough:
+| Profile | Build volume | Resolution |
+|---|---|---|
+| `elegoo-saturn-4-ultra-16k` | 211.68 x 118.37 x 220 mm | 15120 x 6230 |
+
+The others are **arranging only**: plate size and height are filled in, so parts are nested for the right plate, but nemnest has no verified slicing settings for them. Export the plates and slice the `plate_NN.stl` files with your usual slicer.
+
+| Brand | Models |
+|---|---|
+| Elegoo | Mars 3, 3 Pro, 4, 4 Ultra, 4 Max, 4 DLP, 5, 5 Ultra; Saturn 2, 3, 3 Ultra, 4, 4 Ultra 12K; Jupiter SE, Jupiter 2 |
+| Anycubic | Photon Mono 2, 4, 4 Ultra, X 6Ks, M5s, M5s Pro, M7, M7 Pro, M7 Max; Photon P1 |
+| Phrozen | Sonic Mini 8K, Mini 8K S, Mighty 8K, Mighty 12K, Mighty Revo 14K, Mega 8K, Mega 8K S |
+| Creality | Halot-Mage 8K, Halot-Mage Pro, Halot-Mage S 14K |
+| Uniformation | GKtwo |
+
+Sizes come from the manufacturers' pages, cross-checked with the [UVtools](https://github.com/sn4k3/UVtools) printer profiles; where the two differ, the smaller value is used so that nothing ends up off the plate. Each profile file records its source. If a number is wrong for your machine, please open an issue.
+
+For a printer that is not listed, the plate size is enough to arrange:
 
 ```bash
 nemnest arrange ./supported --plate-size 218.88 122.88 260

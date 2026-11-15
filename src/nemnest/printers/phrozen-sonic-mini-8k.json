@@ -1,0 +1,18 @@
+{
+  "id": "phrozen-sonic-mini-8k",
+  "name": "Phrozen Sonic Mini 8K",
+  "tested": false,
+  "notes": "Arranging only: not tested on a real machine. Export the plates and slice them with your usual slicer. Phrozen states 16.5 x 7.2 cm; Y is the exact LCD area from UVtools.",
+  "size_mm": [
+    165.0,
+    71.28,
+    180.0
+  ],
+  "resolution_px": [
+    7500,
+    3240
+  ],
+  "formats": [],
+  "native_format": ".ctb",
+  "source": "https://helpcenter.phrozen3d.com/hc/en-us/articles/6314911442841--Sonic-Mini-8K-Getting-to-Know-Your-Printer"
+}

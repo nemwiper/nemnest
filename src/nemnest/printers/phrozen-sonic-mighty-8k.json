@@ -1,0 +1,18 @@
+{
+  "id": "phrozen-sonic-mighty-8k",
+  "name": "Phrozen Sonic Mighty 8K",
+  "tested": false,
+  "notes": "Arranging only: not tested on a real machine. Export the plates and slice them with your usual slicer. Size rounded by Phrozen.",
+  "size_mm": [
+    218.0,
+    123.0,
+    235.0
+  ],
+  "resolution_px": [
+    7680,
+    4320
+  ],
+  "formats": [],
+  "native_format": ".ctb / .prz",
+  "source": "https://helpcenter.phrozen3d.com/hc/en-us/articles/6453752185369--Sonic-Mighty-8K-Getting-to-Know-Your-Printer"
+}

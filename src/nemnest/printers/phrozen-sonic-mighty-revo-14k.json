@@ -1,0 +1,18 @@
+{
+  "id": "phrozen-sonic-mighty-revo-14k",
+  "name": "Phrozen Sonic Mighty Revo 14K",
+  "tested": false,
+  "notes": "Arranging only: not tested on a real machine. Export the plates and slice them with your usual slicer. Size rounded by Phrozen. Non-square pixels (16.8 x 24.8 um).",
+  "size_mm": [
+    223.0,
+    126.0,
+    235.0
+  ],
+  "resolution_px": [
+    13320,
+    5120
+  ],
+  "formats": [],
+  "native_format": ".ctb / .prz",
+  "source": "https://global.phrozen3d.com/products/sonic-mighty-revo"
+}

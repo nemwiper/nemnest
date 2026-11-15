@@ -1,0 +1,18 @@
+{
+  "id": "elegoo-jupiter-se",
+  "name": "Elegoo Jupiter SE",
+  "tested": false,
+  "notes": "Arranging only: not tested on a real machine. Export the plates and slice them with your usual slicer.",
+  "size_mm": [
+    277.848,
+    156.264,
+    300.0
+  ],
+  "resolution_px": [
+    5448,
+    3064
+  ],
+  "formats": [],
+  "native_format": "not confirmed",
+  "source": "https://us.elegoo.com/products/jupiter-se"
+}

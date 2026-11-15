@@ -1,0 +1,18 @@
+{
+  "id": "anycubic-photon-mono-2",
+  "name": "Anycubic Photon Mono 2",
+  "tested": false,
+  "notes": "Arranging only: not tested on a real machine. Export the plates and slice them with your usual slicer.",
+  "size_mm": [
+    143.0,
+    89.0,
+    165.0
+  ],
+  "resolution_px": [
+    4096,
+    2560
+  ],
+  "formats": [],
+  "native_format": ".pm3n",
+  "source": "https://store.anycubic.com/products/photon-mono-2"
+}

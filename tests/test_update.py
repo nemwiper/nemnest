@@ -7,6 +7,7 @@ import base64
 import hashlib
 import http.server
 import json
+import shutil
 import os
 import threading
 import zipfile
@@ -115,6 +116,7 @@ def test_download_and_unpack(fake_github, tmp_path, monkeypatch):
     new, got_target, work = update.prepare(rel, lambda d, t: seen.append((d, t)))
     assert got_target == target and new.exists() and seen
     assert not list(work.glob("*.zip"))              # the zip is removed once unpacked
+    shutil.rmtree(work)
 
     # a zip that does not match the signed list is refused
     (fake_github["files"] / fake_github["name"]).write_bytes(b"something else")

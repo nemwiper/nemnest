@@ -30,6 +30,15 @@ No Python needed: download `nemnest-...-windows.zip` from the [latest release](h
 - It runs on the CPU. For GPU acceleration, the command line or the MCP server, install with Python as below.
 - To slice from the window, put mslicer's `slicer.exe` (see [Slicing](#slicing-optional)) in the same folder as `nemnest.exe`.
 
+## Download for macOS
+
+No Python needed: from the [latest release](https://github.com/nemwiper/nemnest/releases/latest) download `nemnest-...-macos-arm64.zip` for a Mac with Apple Silicon (M1 and later) or `nemnest-...-macos-intel.zip` for an Intel Mac. Unzip it and move `nemnest.app` to Applications. It opens [the window](#window), with drag and drop.
+
+- The app is not signed by an Apple developer yet, so the first time macOS refuses to open it ("Apple could not verify nemnest is free of malware"). Click *Done*, then open *System Settings → Privacy & Security*, scroll down to the message about nemnest and click *Open Anyway*. From then on it opens normally.
+- Or, from Terminal: `xattr -dr com.apple.quarantine /Applications/nemnest.app`
+- It runs on the CPU. For the command line or the MCP server, install with Python as below.
+- To slice from the window, build mslicer's `slicer` (see [Slicing](#slicing-optional)) and put it in the same folder as `nemnest.app`.
+
 ## Install
 
 Python 3.10 or newer.

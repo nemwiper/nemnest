@@ -97,6 +97,12 @@ TOOLS = [
                                                       "part (easier to remove from the plate). Changes "
                                                       "neither plate count nor heights. Default: the "
                                                       "user's config (true)."},
+                "center_plates": {"type": "boolean",
+                                  "description": "true = once arranged, the parts of each plate are "
+                                                 "shifted together into the middle of the plate, so a "
+                                                 "plate that is not full is not packed into a corner. "
+                                                 "Changes neither plate count nor distances. Default: "
+                                                 "the user's config (true)."},
                 "small_raft_mm2": {"type": "number",
                                    "description": "Footprint area below which a part counts as small "
                                                   "(default 1200 mm2, about 35 x 35 mm)."},
@@ -112,7 +118,9 @@ TOOLS = [
                 "write_stl": {"type": "boolean",
                               "description": "false = placement only (previews and layout.json), without "
                                              "writing the plate_NN.stl files. Default true."},
-                "gap_mm": {"type": "number", "description": "Minimum distance between parts (default 2)."},
+                "gap_mm": {"type": "number", "description": "Minimum distance between part bodies, mm, from 0 to 20 "
+                                                         "(rafts may still overlap). Default: the user's "
+                                                         "config (2)."},
                 "edge_margin_mm": {"type": "number",
                                    "description": "Minimum distance from the plate edge (default 1)."},
                 "rotation_step_deg": {"type": "number",
@@ -206,9 +214,10 @@ def tool_arrange_plates(args):
         workers=int(args["workers"]) if "workers" in args else None,
         optimize_height=bool(args.get("optimize_height", config.get("optimize_height", False))),
         attach_small_rafts=bool(args.get("attach_small_rafts", config.get("attach_small_rafts", True))),
+        center=bool(args.get("center_plates", config.get("center_plates", True))),
         small_raft_mm2=float(args.get("small_raft_mm2", config.get("small_raft_mm2", 1200.0))),
         attach_min_mm2=float(args.get("attach_min_mm2", config.get("attach_min_mm2", 10.0))),
-        gap=float(args.get("gap_mm", 2.0)),
+        gap=cfg.check_gap(args.get("gap_mm", config.get("gap_mm", 2.0))),
         edge=float(args.get("edge_margin_mm", 1.0)),
         rotation_step=float(args.get("rotation_step_deg", 45.0)),
         copies=args.get("copies"),

@@ -16,6 +16,7 @@ import random
 import re
 import struct
 import time
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -377,12 +378,17 @@ class _Plate:
 def pack(parts, labels, plate_w, plate_d, res, gap, edge, angles,
          attempts=12, time_limit=60.0, seed=0, improve=True, gpu="auto",
          optimize_height=False, attach_small=False, small_raft_mm2=1200.0, attach_min_mm2=10.0,
-         fixed_order=False, progress=None):
+         fixed_order=False, center=True, progress=None):
     """Arrange the parts onto the smallest number of plates found.
 
     With `fixed_order` nothing is searched: parts are placed one after the
     other in the given order, each on the current plate, opening a new plate
-    when one does not fit. Adding parts at the end never moves the earlier ones.
+    when one does not fit. Adding parts at the end never moves the earlier ones,
+    so `center` does not apply there.
+
+    With `center`, once the search is done the parts of each plate are shifted
+    together so that their group sits in the middle of the plate. The parts keep
+    their distances, so plate count, gaps and attached rafts do not change.
 
     `progress`, if given, is called a few times per second with a dict (phase,
     attempt, attempts, plates, phase_elapsed, phase_limit). It may raise to
@@ -1014,6 +1020,26 @@ def pack(parts, labels, plate_w, plate_d, res, gap, edge, angles,
         tick(force=True, phase="rafts", plates=len(best), limit=5.0)
         best, stats["raft_attach"] = attach_rafts(best)
 
+    # ---- the search packs towards one corner: a plate that is not full is
+    # ---- shifted as a whole into the middle of the plate
+    def centered(pl):
+        i0 = min(it.i for it in pl.items)
+        j0 = min(it.j for it in pl.items)
+        i1 = max(it.i + it.shape[0] for it in pl.items)
+        j1 = max(it.j + it.shape[1] for it in pl.items)
+        di, dj = (hg - (i1 - i0)) // 2 - i0, (wg - (j1 - j0)) // 2 - j0
+        if di == 0 and dj == 0:
+            return pl
+        out = _Plate(hg, wg, fshape)
+        for it in pl.items:
+            moved = dataclasses.replace(it, i=it.i + di, j=it.j + dj)
+            out.add(moved.m, moved.i, moved.j)
+            out.items.append(moved)
+        return out
+
+    if center:
+        best = [centered(pl) for pl in best]
+
     stats["search_s"] = round(time.time() - start, 1)
     best = sorted(best, key=lambda pl: -pl.used)
     for k, pl in enumerate(best):
@@ -1165,7 +1191,7 @@ def arrange(folder, output_dir, printer, gap=2.0, edge=1.0, rotation_step=45.0,
             res=0.5, copies=None, attempts=12, time_limit=60.0, exclude=None,
             write_stl=True, raft_height=1.0, gpu="auto", workers=None, optimize_height=False,
             attach_small_rafts=False, small_raft_mm2=1200.0, attach_min_mm2=10.0,
-            files=None, fixed_order=False) -> dict:
+            files=None, fixed_order=False, center=True) -> dict:
     """Read the STLs in the folder, nest them and write plates, previews and layout.json."""
     copies = copies or {}
     files = [Path(f) for f in files] if files is not None else list_stls(folder, exclude)
@@ -1194,12 +1220,12 @@ def arrange(folder, output_dir, printer, gap=2.0, edge=1.0, rotation_step=45.0,
         parts, labels, plate_w, plate_d, res, gap, edge, angles, attempts, time_limit, gpu=gpu,
         optimize_height=optimize_height,
         attach_small=bool(attach_small_rafts) and raft_height > 0, small_raft_mm2=small_raft_mm2,
-        attach_min_mm2=attach_min_mm2, fixed_order=fixed_order)
+        attach_min_mm2=attach_min_mm2, fixed_order=fixed_order, center=center)
     settings = {"gap_mm": gap, "edge_margin_mm": edge, "rotation_step_deg": step,
                 "resolution_mm": res, "raft_height_mm": raft_height,
                 "optimize_height": bool(optimize_height),
                 "attach_small_rafts": bool(attach_small_rafts), "small_raft_mm2": small_raft_mm2,
-                "fixed_order": bool(fixed_order)}
+                "fixed_order": bool(fixed_order), "center": bool(center) and not fixed_order}
     return write_layout(output_dir, printer, placements, n_plates, grid, settings, models=len(parts),
                         unplaceable=unplaceable, too_tall=too_tall, load_s=t_load, write_stl=write_stl)
 

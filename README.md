@@ -76,7 +76,7 @@ A simple top view, one plate per screen, no 3D. Import STL files or a whole fold
 
 - Move between plates with the mouse wheel, the arrow keys or Page Up / Page Down.
 - After each import a short summary tells you how many parts were added and how many plates there are.
-- **Optimise** rearranges everything on as few plates as possible (rotation and height grouping are options), with a progress bar, the best result so far and a Cancel button that keeps the current layout.
+- **Optimise** rearranges everything on as few plates as possible (rotation, height grouping and the minimum gap between parts are options; the gap, 0 to 20 mm, is remembered for next time, also by the command line and the MCP server), with a progress bar, the best result so far and a Cancel button that keeps the current layout.
 - **Export plates** writes the merged plate STLs, previews and `layout.json`; **Export and slice** also produces the print files.
 - Pick the printer from the list, or **Add printer** to enter the plate size of your own.
 
@@ -107,7 +107,8 @@ Useful options of `arrange`:
 | `-x "*water*"` | leave out files matching a pattern (repeatable) |
 | `--no-stl` | placement only: previews and `layout.json`, quick to review |
 | `--optimize-height` | group tall parts to cut total print time, never adding plates |
-| `--gap 2` | minimum distance between parts, mm |
+| `--no-center` | leave the parts packed into one corner; by default each plate's group is moved to the middle of the plate |
+| `--gap 2` | minimum distance between parts, mm (0 to 20); `nemnest config --gap 1.5` changes the default |
 | `--edge 1` | minimum distance from the plate edge, mm |
 | `--raft-height 1` | thickness treated as raft; `0` turns raft overlap off |
 | `--rotation-step 45` | Z rotation step in degrees; `0` keeps the original orientation |

@@ -298,3 +298,58 @@ def test_window_accepts_mixed_files_and_folders(workspace):
     assert added == 1 + workspace["count"]        # the single file, then the whole folder; the rest ignored
     s.layout()
     assert len(s.placements) == added and sum(label.startswith(one.name) for label in s.labels()) == 2
+
+
+def test_partial_plate_is_centered(workspace):
+    """A plate that is not full sits in the middle of the plate, not in a
+    corner; the shift keeps the distances between the parts."""
+    files = sorted(workspace["models"].glob("*.stl"))[:3]
+    printer = cfg.resolve_printer("elegoo-saturn-4-ultra-16k")
+    w, d, _h = printer["size_mm"]
+
+    def group_box(center):
+        out = workspace["work"] / f"plates_center_{center}"
+        nest.arrange(workspace["models"], out, printer, gap=GAP, edge=EDGE, files=files, write_stl=False,
+                     gpu=False, time_limit=10, center=center)
+        layout = json.loads((out / "layout.json").read_text(encoding="utf-8"))
+        assert layout["plates_count"] == 1
+        pts = np.concatenate([nest.move_tris(e["file"], e["rotation_z_deg"], e["pivot_mm"], e["center_mm"],
+                                             e["z_min_mm"]).reshape(-1, 3)[:, :2]
+                              for e in layout["plates"][0]["parts"]])
+        return pts.min(0), pts.max(0), measure_layout(layout)
+
+    lo, hi, (gap, edge) = group_box(True)
+    mid = (lo + hi) / 2
+    assert abs(mid[0]) < 1.0 and abs(mid[1]) < 1.0, mid        # group in the middle, within 1 mm
+    assert gap >= GAP - 0.75 and edge >= EDGE - 1e-6
+    lo0, hi0, (gap0, _e) = group_box(False)
+    assert lo0[0] < lo[0] - 10                                   # without it, the group hugs one side
+    assert np.allclose(hi0 - lo0, hi - lo, atol=1e-3)            # same group, only shifted
+
+
+def test_gap_setting(workspace, capsys):
+    """The gap is checked, remembered in the config, used by the window and
+    by the command line, and the parts keep at least that distance."""
+    for bad in (-1, 25, "abc"):
+        with pytest.raises(ValueError):
+            cfg.check_gap(bad)
+    assert cfg.check_gap("1,5") == 1.5
+    from nemnest import gui
+    assert cli.main(["config", "--gap", "4"]) == 0
+    assert cfg.load_config()["gap_mm"] == 4.0
+    s = gui.Session()
+    assert s.gap == 4.0                                          # the window starts from the config
+    s.add_files(sorted(str(p) for p in workspace["models"].iterdir())[:8])
+    assert not s.set_gap("4") and s.set_gap(3) and cfg.load_config()["gap_mm"] == 3.0
+    s.layout(optimise=True, time_limit=10, gpu=False)
+    out = workspace["work"] / "plates_gap_window"
+    s.export(out)
+    layout = json.loads((out / "layout.json").read_text(encoding="utf-8"))
+    assert layout["settings"]["gap_mm"] == 3.0 and measure_layout(layout)[0] >= 3.0 - 0.75
+    out = workspace["work"] / "plates_gap_cli"
+    assert cli.main(["arrange", str(workspace["models"]), "-o", str(out), "--no-stl", "--cpu",
+                     "--time-limit", "10"]) == 0                 # no --gap: the config value
+    layout = json.loads((out / "layout.json").read_text(encoding="utf-8"))
+    assert layout["settings"]["gap_mm"] == 3.0 and measure_layout(layout)[0] >= 3.0 - 0.75
+    cfg.save_config({"gap_mm": 2.0})
+    capsys.readouterr()

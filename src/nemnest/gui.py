@@ -37,10 +37,11 @@ def progress_fraction(info: dict) -> float:
 class Session:
     """The parts imported so far and their current layout."""
 
-    def __init__(self, printer=None, gap=2.0, edge=1.0, raft_height=1.0, res=0.5):
+    def __init__(self, printer=None, gap=None, edge=1.0, raft_height=1.0, res=0.5):
         self.config = cfg.load_config()
         self.printer = cfg.resolve_printer(printer, self.config)
-        self.gap, self.edge, self.raft_height, self.res = gap, edge, raft_height, res
+        gap = self.config.get("gap_mm", 2.0) if gap is None else gap
+        self.gap, self.edge, self.raft_height, self.res = cfg.check_gap(gap), edge, raft_height, res
         self.files: list[str] = []          # arrival order; a file listed twice is two copies
         self.parts: dict[str, nest.Part] = {}
         self.label_index: dict[str, int] = {}
@@ -103,6 +104,17 @@ class Session:
     def set_printer(self, ref):
         self.printer = cfg.resolve_printer(ref, self.config)
 
+    def set_gap(self, value) -> bool:
+        """Change the minimum distance between parts and remember it.
+        Returns whether it changed; the caller lays the plates out again."""
+        gap = cfg.check_gap(value)
+        if gap == self.gap:
+            return False
+        self.gap = gap
+        self.config["gap_mm"] = gap
+        cfg.save_config({"gap_mm": gap})
+        return True
+
     # ---- layout
     def layout(self, optimise=False, rotate=True, optimize_height=False, time_limit=60.0, attempts=24, gpu="auto",
                progress=None):
@@ -126,7 +138,8 @@ class Session:
             attach_small=bool(optimise and self.raft_height > 0 and self.config.get("attach_small_rafts", True)),
             small_raft_mm2=float(self.config.get("small_raft_mm2", 1200.0)),
             attach_min_mm2=float(self.config.get("attach_min_mm2", 10.0)),
-            fixed_order=not optimise, progress=progress)
+            fixed_order=not optimise, center=bool(self.config.get("center_plates", True)),
+            progress=progress)
         self.clear_layout()
         self.too_tall = too_tall
         self.placements, self.n_plates, self.unplaceable, self.grid = result
@@ -135,7 +148,8 @@ class Session:
         self.settings = {"gap_mm": self.gap, "edge_margin_mm": self.edge,
                          "rotation_step_deg": 45.0 if len(angles) > 1 else 0.0, "resolution_mm": self.res,
                          "raft_height_mm": self.raft_height, "optimize_height": bool(optimise and optimize_height),
-                         "attach_small_rafts": bool(optimise), "fixed_order": not optimise}
+                         "attach_small_rafts": bool(optimise), "fixed_order": not optimise,
+                         "center": bool(optimise and self.config.get("center_plates", True))}
 
     def plate_items(self, k: int) -> list:
         return [it for it in self.placements if it.plate == k]
@@ -485,8 +499,19 @@ def main(argv=None) -> int:
         ttk.Label(row, text="Search for at most").pack(side="left")
         ttk.Spinbox(row, from_=10, to=900, increment=10, width=5, textvariable=seconds).pack(side="left", padx=6)
         ttk.Label(row, text="seconds").pack(side="left")
+        gap = tk.StringVar(value=f"{session.gap:g}")
+        row = ttk.Frame(frame)
+        row.pack(anchor="w", pady=(0, 8))
+        ttk.Label(row, text="Minimum gap between parts").pack(side="left")
+        ttk.Spinbox(row, from_=0, to=cfg.MAX_GAP_MM, increment=0.5, width=5, textvariable=gap).pack(side="left", padx=6)
+        ttk.Label(row, text=f"mm (0 to {cfg.MAX_GAP_MM:g}; rafts may still touch)").pack(side="left")
 
         def start():
+            try:
+                session.set_gap(gap.get())      # remembered for next time
+            except ValueError as exc:
+                messagebox.showerror("nemnest", str(exc).capitalize(), parent=win)
+                return
             opts = dict(optimise=True, rotate=rotate.get(), optimize_height=height.get(),
                         time_limit=float(seconds.get()))
             win.destroy()
@@ -587,6 +612,7 @@ def main(argv=None) -> int:
     ttk.Label(bar, text="Printer").pack(side="right")
     printer_var.set(session.printer.get("name", ""))
     combo.bind("<<ComboboxSelected>>", pick_printer)
+
 
     # ---- plate navigation: wheel, arrows, page keys
     def wheel(event):

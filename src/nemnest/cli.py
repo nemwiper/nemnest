@@ -65,7 +65,13 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--attach-small-rafts", dest="attach_small_rafts", action="store_true", default=None,
                    help="move small parts so their raft overlaps a larger one")
     r.add_argument("--no-attach-small-rafts", dest="attach_small_rafts", action="store_false")
-    p.add_argument("--gap", type=float, help="minimum distance between parts in mm (default 2)")
+    c = p.add_mutually_exclusive_group()
+    c.add_argument("--center", dest="center_plates", action="store_true", default=None,
+                   help="shift the parts of each plate together into the middle of the plate (default)")
+    c.add_argument("--no-center", dest="center_plates", action="store_false",
+                   help="leave the parts packed towards one corner")
+    p.add_argument("--gap", type=float,
+                   help="minimum distance between parts in mm (default: the config, 2 unless changed)")
     p.add_argument("--edge", type=float, help="minimum distance from the plate edge in mm (default 1)")
     p.add_argument("--raft-height", type=float,
                    help="thickness in mm treated as raft, allowed to overlap (default 1; 0 = off)")
@@ -102,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--printer", help="set the default printer profile")
     p.add_argument("--slicer", help="set the path of the mslicer command-line slicer")
     p.add_argument("--optimize-height", choices=["on", "off"], help="set the default for height optimisation")
+    p.add_argument("--gap", type=float, help="set the default minimum distance between parts, mm")
 
     p = sub.add_parser("gui", help="open the window: import STLs and see the plates from above")
     p.add_argument("paths", nargs="*", help="STL files or folders to load at start")
@@ -136,7 +143,8 @@ def cmd_scan(ns, server):
 def cmd_arrange(ns, server):
     args = _common(ns, {"folder": _folders(ns), "exclude": ns.exclude, "write_stl": not ns.no_stl})
     for key, value in (("output_dir", ns.output), ("optimize_height", ns.optimize_height),
-                       ("attach_small_rafts", ns.attach_small_rafts), ("gap_mm", ns.gap),
+                       ("attach_small_rafts", ns.attach_small_rafts),
+                       ("center_plates", ns.center_plates), ("gap_mm", ns.gap),
                        ("edge_margin_mm", ns.edge), ("raft_height_mm", ns.raft_height),
                        ("rotation_step_deg", ns.rotation_step), ("attempts", ns.attempts),
                        ("time_limit_s", ns.time_limit), ("workers", ns.workers), ("use_gpu", ns.gpu)):
@@ -206,6 +214,8 @@ def cmd_config(ns, server):
         changes["slicer_exe"] = ns.slicer
     if ns.optimize_height:
         changes["optimize_height"] = ns.optimize_height == "on"
+    if ns.gap is not None:
+        changes["gap_mm"] = cfg.check_gap(ns.gap)
     if changes:
         print(f"saved to {cfg.save_config(changes)}")
     config = cfg.load_config()

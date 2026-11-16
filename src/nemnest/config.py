@@ -18,6 +18,8 @@ DEFAULTS = {
     "slicer_exe": None,
     "optimize_height": False,
     "attach_small_rafts": True,
+    "center_plates": True,
+    "gap_mm": 2.0,
     "small_raft_mm2": 1200.0,
     "attach_min_mm2": 10.0,
     "gui_import_summary": True,
@@ -53,6 +55,20 @@ def load_config() -> dict:
             raise ValueError(f"{path} must contain a JSON object")
         config.update(user)
     return config
+
+
+MAX_GAP_MM = 20.0
+
+
+def check_gap(value) -> float:
+    """Minimum distance between parts, mm: a number from 0 to MAX_GAP_MM."""
+    try:
+        gap = float(str(value).replace(",", "."))
+    except ValueError:
+        raise ValueError(f"the gap must be a number of mm, got \"{value}\"") from None
+    if not 0 <= gap <= MAX_GAP_MM:
+        raise ValueError(f"the gap must be between 0 and {MAX_GAP_MM:g} mm, got {gap:g}")
+    return gap
 
 
 def save_config(changes: dict) -> Path:

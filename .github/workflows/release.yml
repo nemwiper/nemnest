@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: python -m pip install . tkinterdnd2 pyinstaller pytest
+        run: python -m pip install ".[gui,update,dev]" pyinstaller
       - name: Test
         run: python -m pytest -q
       - name: Build
@@ -40,6 +40,21 @@ jobs:
           $p = Start-Process -PassThru -Wait -FilePath dist\nemnest\nemnest.exe -ArgumentList "--selftest", "selftest.json"
           Get-Content selftest.json
           if ($p.ExitCode -ne 0) { Write-Error "self-test failed"; exit 1 }
+      - name: Rehearse an update (swap script)
+        shell: pwsh
+        run: |
+          $d = "$env:RUNNER_TEMP\upd"
+          $p = Start-Process -PassThru -Wait -FilePath dist\nemnest\nemnest.exe -ArgumentList "--selftest-update", $d
+          if ($p.ExitCode -ne 0) { Write-Error "could not start the update"; exit 1 }
+          Start-Sleep -Seconds 15
+          $inst = "$d\inst\nemnest"
+          if (Test-Path "$inst\_internal\stale-file") { Write-Error "old files left behind"; exit 1 }
+          if (-not (Test-Path "$inst\slicer.exe")) { Write-Error "the user's slicer.exe was removed"; exit 1 }
+          if (Test-Path "$d\work") { Write-Error "work folder not removed"; exit 1 }
+          if (Get-ChildItem $inst -Filter "*.old") { Write-Error "backup left behind"; exit 1 }
+          $q = Start-Process -PassThru -Wait -FilePath "$inst\nemnest.exe" -ArgumentList "--selftest", "selftest2.json"
+          Get-Content selftest2.json
+          if ($q.ExitCode -ne 0) { Write-Error "the updated program fails its self-test"; exit 1 }
       - name: Check that the window starts
         shell: pwsh
         run: |
@@ -74,7 +89,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: python -m pip install . tkinterdnd2 pyinstaller pytest
+        run: python -m pip install ".[gui,update,dev]" pyinstaller
       - name: Test
         run: python -m pytest -q
       - name: Build
@@ -85,6 +100,17 @@ jobs:
           dist/nemnest.app/Contents/MacOS/nemnest --selftest selftest.json || status=$?
           cat selftest.json
           exit $status
+      - name: Rehearse an update (swap script)
+        run: |
+          d="$RUNNER_TEMP/upd"
+          dist/nemnest.app/Contents/MacOS/nemnest --selftest-update "$d"
+          sleep 15
+          app="$d/inst/nemnest.app"
+          test ! -e "$app/Contents/Resources/stale-file" || { echo "old files left behind"; exit 1; }
+          test ! -e "$d/work" || { echo "work folder not removed"; exit 1; }
+          test ! -e "$d/inst/nemnest.app.old-update" || { echo "backup left behind"; exit 1; }
+          codesign --verify --deep --strict "$app"
+          "$app/Contents/MacOS/nemnest" --selftest selftest2.json
       - name: Check that the window starts
         run: |
           dist/nemnest.app/Contents/MacOS/nemnest &

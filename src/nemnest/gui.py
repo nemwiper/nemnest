@@ -9,6 +9,7 @@ they arrive, unrotated; when one no longer fits, a new plate is opened. The
 from __future__ import annotations
 
 import json
+import os
 import queue
 import re
 import threading
@@ -649,6 +650,8 @@ def main(argv=None) -> int:
         state["resize"] = root.after(120, draw)
     canvas.bind("<Configure>", resized)
 
+    setup_updates(root, tk, ttk, messagebox, body, state, centre)
+
     session.add_paths(argv or [])
     if session.files:
         session.layout()
@@ -656,6 +659,112 @@ def main(argv=None) -> int:
     root.after(80, poll)
     root.mainloop()
     return 0
+
+
+def setup_updates(root, tk, ttk, messagebox, body, state, centre):
+    """Look for a newer release in the background and offer it in a banner
+    above the plate. Installing asks first, downloads with a progress bar,
+    then closes the window; a script swaps the files and reopens nemnest."""
+    import webbrowser
+    from . import update
+
+    config = cfg.load_config()
+    if not config.get("check_updates", True) or os.environ.get("NEMNEST_NO_UPDATE_CHECK"):
+        return
+    found: queue.Queue = queue.Queue()
+
+    def look():
+        try:
+            found.put(("check", update.check()))
+        except Exception:
+            found.put(("check", None))          # offline or GitHub unreachable: say nothing
+    threading.Thread(target=look, daemon=True).start()
+
+    banner = ttk.Frame(root, padding=(10, 6))
+    message = tk.StringVar()
+    ttk.Label(banner, textvariable=message).pack(side="left")
+    buttons = ttk.Frame(banner)
+    buttons.pack(side="right")
+
+    def show(rel):
+        tag = rel["tag"]
+        for child in buttons.winfo_children():
+            child.destroy()
+        if rel["action"] == "install":
+            message.set(f"nemnest {tag} is available (you have {__version__}).")
+            ttk.Button(buttons, text="Update and restart…", command=lambda: install(rel)).pack(side="left", padx=4)
+        elif rel["action"] == "pip":
+            message.set(f"nemnest {tag} is available. Update with: "
+                        f"pip install --upgrade git+https://github.com/{update.REPO}@{tag}")
+        else:
+            message.set(f"nemnest {tag} is available (you have {__version__}).")
+        ttk.Button(buttons, text="What's new", command=lambda: webbrowser.open(rel["url"])).pack(side="left", padx=4)
+        ttk.Button(buttons, text="Not now", command=banner.pack_forget).pack(side="left", padx=4)
+        banner.pack(side="top", fill="x", before=body)
+
+    def install(rel):
+        if state["busy"]:
+            messagebox.showinfo("nemnest", "Wait for the current task to finish, then update.")
+            return
+        if not messagebox.askyesno(
+                "Update nemnest",
+                f"Download nemnest {rel['tag']} and restart?\n\nParts in the window that are not "
+                "exported will be lost. Exported plates and your settings are kept."):
+            return
+        win = tk.Toplevel(root)
+        win.title("Updating nemnest")
+        win.transient(root)
+        win.resizable(False, False)
+        win.protocol("WM_DELETE_WINDOW", lambda: None)      # nothing to cancel halfway safely
+        frame = ttk.Frame(win, padding=14)
+        frame.pack()
+        text = tk.StringVar(value=f"Downloading nemnest {rel['tag']}…")
+        ttk.Label(frame, textvariable=text, width=44).pack(anchor="w")
+        bar_ = ttk.Progressbar(frame, length=360, maximum=1000, mode="determinate")
+        bar_.pack(pady=8)
+        centre(win)
+        state["busy"] = True
+        share = {"done": 0, "total": 0}
+
+        def work():
+            try:
+                found.put(("ready", update.prepare(
+                    rel, lambda d, t: share.update(done=d, total=t))))
+            except Exception as exc:
+                found.put(("failed", exc))
+        threading.Thread(target=work, daemon=True).start()
+        state["update_win"] = (win, bar_, text, share)
+        root.after(150, poll_updates)       # the check's polling has stopped: restart it
+
+    def poll_updates():
+        try:
+            kind, value = found.get_nowait()
+        except queue.Empty:
+            if state.get("update_win"):
+                _, bar_, _, share = state["update_win"]
+                if share["total"]:
+                    bar_["value"] = int(1000 * share["done"] / share["total"])
+            root.after(150, poll_updates)
+            return
+        if kind == "check":
+            if value:
+                show(value)
+            return                          # nothing else will come unless the user installs
+        win = state.pop("update_win")[0]
+        win.destroy()
+        state["busy"] = False
+        if kind == "failed":
+            messagebox.showerror("nemnest", f"The update was not installed.\n\n{value}")
+            return
+        new, target, work = value
+        try:
+            update.start_install(new, target, work)
+        except Exception as exc:
+            messagebox.showerror("nemnest", f"The update was not installed.\n\n{exc}")
+            return
+        root.destroy()
+
+    root.after(150, poll_updates)
 
 
 if __name__ == "__main__":

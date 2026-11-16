@@ -109,6 +109,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--slicer", help="set the path of the mslicer command-line slicer")
     p.add_argument("--optimize-height", choices=["on", "off"], help="set the default for height optimisation")
     p.add_argument("--gap", type=float, help="set the default minimum distance between parts, mm")
+    p.add_argument("--check-updates", choices=["on", "off"],
+                   help="whether the window looks for a newer release on GitHub at start")
 
     p = sub.add_parser("gui", help="open the window: import STLs and see the plates from above")
     p.add_argument("paths", nargs="*", help="STL files or folders to load at start")
@@ -216,6 +218,8 @@ def cmd_config(ns, server):
         changes["optimize_height"] = ns.optimize_height == "on"
     if ns.gap is not None:
         changes["gap_mm"] = cfg.check_gap(ns.gap)
+    if ns.check_updates:
+        changes["check_updates"] = ns.check_updates == "on"
     if changes:
         print(f"saved to {cfg.save_config(changes)}")
     config = cfg.load_config()

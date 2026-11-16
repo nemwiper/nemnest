@@ -38,6 +38,18 @@ def selftest(out_path: str) -> int:
             pids = set(pool.map(_pid, range(4)))
         report["worker_processes"] = len(pids - {os.getpid()})
 
+        # updates: the signature check must work in the built program (RFC 8032 test 3)
+        import base64
+        from nemnest import ed25519, update
+        pub = bytes.fromhex("fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025")
+        sig = bytes.fromhex("6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac"
+                            "18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a")
+        good = ed25519.verify(pub, b"\xaf\x82", sig)
+        bad = ed25519.verify(pub, b"\xaf\x83", sig)
+        report["signature_check"] = "ok" if good and not bad else f"wrong result (good={good}, bad={bad})"
+        if len(base64.b64decode(update.PUBLIC_KEY)) != 32:
+            report["signature_check"] = "the release public key is not 32 bytes"
+
         printer = cfg.resolve_printer("elegoo-saturn-4-ultra-16k", {})
         plate = {k: printer[k] for k in ("id", "name", "size_mm", "resolution_px")}
         with tempfile.TemporaryDirectory() as tmp:
@@ -55,16 +67,51 @@ def selftest(out_path: str) -> int:
             report["plates"] = len(plates)
             report["parts"] = sum(len(p["parts"]) for p in plates)
             report["files"] = sorted(p.name for p in out.iterdir())
-        report["ok"] = report["worker_processes"] >= 1 and report["parts"] == 12 and "plate_01.stl" in report["files"]
+        report["ok"] = report["signature_check"] == "ok" and report["worker_processes"] >= 1 and report["parts"] == 12 and "plate_01.stl" in report["files"]
     except Exception:
         report["error"] = traceback.format_exc()
     Path(out_path).write_text(json.dumps(report, indent=2))
     return 0 if report["ok"] else 1
 
 
+def selftest_update(folder: str) -> int:
+    """Rehearse an update on copies of this program, with the real swap script.
+
+    `folder`/inst gets a copy of this program plus a stale file that the
+    update must remove (and, on Windows, a user's slicer.exe that it must
+    keep); `folder`/new gets another copy. The detached script swaps them once
+    this process has exited; the workflow then checks the result."""
+    import os
+    import shutil
+    from nemnest import update
+
+    target = update.install_target()
+    if target is None:
+        print("not a standalone program", file=sys.stderr)
+        return 1
+    root = Path(folder)
+    inst, new, work = root / "inst" / target.name, root / "new" / target.name, root / "work"
+    for path in (inst, new):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if sys.platform == "darwin":       # ditto keeps symlinks and the signature
+            import subprocess
+            subprocess.run(["ditto", str(target), str(path)], check=True)
+        else:
+            shutil.copytree(target, path, symlinks=True)
+    stale = inst / ("Contents/Resources/stale-file" if sys.platform == "darwin" else "_internal/stale-file")
+    stale.write_text("from the old version")
+    if os.name == "nt":
+        (inst / "slicer.exe").write_text("the user's slicer")
+    work.mkdir()
+    update.start_install(new, inst, work, os.getpid(), restart=False)
+    return 0
+
+
 if __name__ == "__main__":
     multiprocessing.freeze_support()     # the STL readers run in worker processes
     if len(sys.argv) == 3 and sys.argv[1] == "--selftest":
         sys.exit(selftest(sys.argv[2]))
+    if len(sys.argv) == 3 and sys.argv[1] == "--selftest-update":
+        sys.exit(selftest_update(sys.argv[2]))
     from nemnest import gui
     sys.exit(gui.main(sys.argv[1:]))

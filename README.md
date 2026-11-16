@@ -39,6 +39,12 @@ No Python needed: from the [latest release](https://github.com/nemwiper/nemnest/
 - It runs on the CPU. For the command line or the MCP server, install with Python as below.
 - To slice from the window, build mslicer's `slicer` (see [Slicing](#slicing-optional)) and put it in the same folder as `nemnest.app`.
 
+## Updates
+
+When the window opens, the Windows and macOS programs ask GitHub whether there is a newer release (one request to the GitHub API, which sees your IP address and nemnest version like any website would; no files or settings are sent). If there is, a bar above the plate offers *Update and restart*: nemnest downloads the package for your computer, checks it, closes, swaps its files and opens the new version. Your settings, printer profiles and a `slicer` next to the program are kept.
+
+An update is installed only if the release is signed with the maintainer's key, which is kept offline and not on GitHub: a package that does not match its signed hash is refused. Turn the check off with `nemnest config --check-updates off` (or `"check_updates": false` in the config file). A Python install is shown the `pip` command instead.
+
 ## Install
 
 Python 3.10 or newer.
@@ -202,6 +208,14 @@ pytest
 ```
 
 The tests generate synthetic models, arrange them through the MCP server and the command line, and measure the distances on the transformed geometry.
+
+### Releasing
+
+Push a `vX.Y.Z` tag: the release workflow builds and tests the Windows and macOS programs (including a rehearsal of the update swap) and attaches them to the release. Then sign it on the maintainer's computer, so that installed programs accept it as an update:
+
+```bash
+python packaging/sign_release.py vX.Y.Z
+```
 
 ## Licence
 

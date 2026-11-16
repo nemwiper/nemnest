@@ -39,6 +39,16 @@ No Python needed: from the [latest release](https://github.com/nemwiper/nemnest/
 - It runs on the CPU. For the command line or the MCP server, install with Python as below.
 - To slice from the window, build mslicer's `slicer` (see [Slicing](#slicing-optional)) and put it in the same folder as `nemnest.app`.
 
+### Checking a download
+
+Every zip since v0.2.4 is built by GitHub Actions from the public code in this repository, and GitHub records which build and which commit produced it. To check a zip you downloaded (needs the [GitHub CLI](https://cli.github.com)):
+
+```
+gh attestation verify nemnest-vX.Y.Z-windows.zip --repo nemwiper/nemnest
+```
+
+It names the workflow run and the commit the file comes from, and fails for a file that GitHub did not build here.
+
 ## Updates
 
 When the window opens, the Windows and macOS programs ask GitHub whether there is a newer release (one request to the GitHub API, which sees your IP address and nemnest version like any website would; no files or settings are sent). If there is, a bar above the plate offers *Update and restart*: nemnest downloads the package for your computer, checks it, closes, swaps its files and opens the new version. Your settings, printer profiles and a `slicer` next to the program are kept.

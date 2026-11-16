@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write       # build attestations: proof that GitHub built each zip
+  attestations: write
 
 env:
   PYINSTALLER_ARGS: >
@@ -69,6 +71,10 @@ jobs:
           $name = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "dev" }
           Copy-Item LICENSE dist\nemnest\LICENSE.txt
           Compress-Archive -Path dist\nemnest -DestinationPath "nemnest-$name-windows.zip"
+      - name: Attest that GitHub built the zip
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: nemnest-*-windows.zip
       - uses: actions/upload-artifact@v4
         with:
           name: nemnest-windows
@@ -126,6 +132,10 @@ jobs:
           cp -R dist/nemnest.app pkg/
           cp LICENSE pkg/LICENSE.txt
           ditto -c -k --sequesterRsrc pkg "nemnest-$name-macos-${{ matrix.arch }}.zip"
+      - name: Attest that GitHub built the zip
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: nemnest-*-macos-*.zip
       - uses: actions/upload-artifact@v4
         with:
           name: nemnest-macos-${{ matrix.arch }}

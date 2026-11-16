@@ -38,22 +38,17 @@ def selftest(out_path: str) -> int:
             pids = set(pool.map(_pid, range(4)))
         report["worker_processes"] = len(pids - {os.getpid()})
 
-        # updates: the signature check must work in the built program
+        # updates: the signature check must work in the built program (RFC 8032 test 3)
         import base64
-        from cryptography.hazmat.primitives import serialization
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-        from nemnest import update
-        key = Ed25519PrivateKey.generate()
-        public = base64.b64encode(key.public_key().public_bytes(
-            serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
-        sums = b"0" * 64 + b"  test.zip\n"
-        update.verify_sums(sums, base64.b64encode(key.sign(sums)), public)
-        try:
-            update.verify_sums(sums + b"x", base64.b64encode(key.sign(sums)), public)
-            report["signature_check"] = "accepted a bad signature"
-        except update.UpdateError:
-            report["signature_check"] = "ok"
-        report["update_key"] = update.PUBLIC_KEY[:8] + "…"
+        from nemnest import ed25519, update
+        pub = bytes.fromhex("fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025")
+        sig = bytes.fromhex("6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac"
+                            "18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a")
+        good = ed25519.verify(pub, b"\xaf\x82", sig)
+        bad = ed25519.verify(pub, b"\xaf\x83", sig)
+        report["signature_check"] = "ok" if good and not bad else f"wrong result (good={good}, bad={bad})"
+        if len(base64.b64decode(update.PUBLIC_KEY)) != 32:
+            report["signature_check"] = "the release public key is not 32 bytes"
 
         printer = cfg.resolve_printer("elegoo-saturn-4-ultra-16k", {})
         plate = {k: printer[k] for k in ("id", "name", "size_mm", "resolution_px")}

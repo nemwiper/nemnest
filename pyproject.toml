@@ -25,8 +25,7 @@ dynamic = ["version"]
 gui = ["tkinterdnd2>=0.4"]
 # GPU acceleration of the placement search (NVIDIA, CUDA 12)
 gpu = ["cupy-cuda12x"]
-# checking the signature of updates (standalone programs)
-update = ["cryptography>=42"]
+# tests (cryptography: cross-check of the update signature verifier) and signing releases
 dev = ["pytest>=7", "cryptography>=42"]
 
 [project.urls]

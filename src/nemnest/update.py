@@ -128,16 +128,13 @@ def _read(url: str, limit: int = 1 << 20) -> bytes:
 
 def verify_sums(sums: bytes, sig: bytes, public_key: str | None = None) -> dict:
     """Check the signature of SHA256SUMS and return {file name: sha256 hex}."""
+    from . import ed25519
     try:
-        from cryptography.exceptions import InvalidSignature
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-    except ImportError as exc:
-        raise UpdateError("this installation cannot check signatures (cryptography is missing)") from exc
-    try:
-        key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key or PUBLIC_KEY))
-        key.verify(base64.b64decode(sig.strip()), sums)
-    except (InvalidSignature, ValueError) as exc:
-        raise UpdateError("the release signature is not valid: the update was not installed") from exc
+        ok = ed25519.verify(base64.b64decode(public_key or PUBLIC_KEY), sums, base64.b64decode(sig.strip()))
+    except ValueError:
+        ok = False
+    if not ok:
+        raise UpdateError("the release signature is not valid: the update was not installed")
     table = {}
     for line in sums.decode("utf-8").splitlines():
         parts = line.split()

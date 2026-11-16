@@ -18,6 +18,7 @@ env:
     --osx-bundle-identifier io.github.nemwiper.nemnest
     --collect-data nemnest --collect-all tkinterdnd2
     --exclude-module cupy --exclude-module cupyx --exclude-module torch --exclude-module pytest
+    --exclude-module cryptography
 
 jobs:
   windows:
@@ -28,7 +29,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: python -m pip install ".[gui,update,dev]" pyinstaller
+        run: python -m pip install ".[gui,dev]" pyinstaller
       - name: Test
         run: python -m pytest -q
       - name: Build
@@ -89,7 +90,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: python -m pip install ".[gui,update,dev]" pyinstaller
+        run: python -m pip install ".[gui,dev]" pyinstaller
       - name: Test
         run: python -m pytest -q
       - name: Build

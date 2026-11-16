@@ -211,6 +211,8 @@ def write_script(new: Path, target: Path, work: Path, pid: int, system: str | No
     removes `work`. A log is left in `work`'s parent if something fails."""
     system = system or sys.platform
     log = work.parent / "nemnest-update.log"
+    start_win = 'Start-Process -FilePath "$inst\\nemnest.exe"' if restart else ""
+    start_mac = 'open "$APP"' if restart else ""
     if system.startswith("win"):
         script = work / "update.ps1"
         script.write_text(f"""\
@@ -236,7 +238,7 @@ try {{
     Rename-Item -LiteralPath "$inst\\$name.old" -NewName $name -ErrorAction SilentlyContinue
   }}
 }}
-{"Start-Process -FilePath \"$inst\\nemnest.exe\"" if restart else ""}
+{start_win}
 Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 """, encoding="utf-8-sig")
         return ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
@@ -258,7 +260,7 @@ if mv "$APP" "$OLD"; then
 else
   echo "$(date) update failed: cannot move $APP" >> "$LOG"
 fi
-{'open "$APP"' if restart else ""}
+{start_mac}
 rm -rf "$WORK"
 """)
     script.chmod(0o755)

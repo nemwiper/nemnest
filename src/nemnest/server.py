@@ -61,6 +61,12 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "list_resins",
+        "description": "Lists the user's resin profiles (exposure times, layer height, lift settings) "
+                       "and the one currently configured. Profiles are created in the nemnest window.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "scan_folder",
         "description": "Lists the STL files of a folder with bounding box, height, footprint area "
                        "and whether each fits the plate. Writes nothing.",
@@ -162,6 +168,10 @@ TOOLS = [
                 "plates_dir": {"type": "string", "description": "Folder with the plate_NN.stl files."},
                 "plates": {"type": "array", "items": {"type": "integer"},
                            "description": "Plate numbers to slice. If omitted, all."},
+                "resin": {"type": "string",
+                          "description": "Resin profile id or name (see list_resins): its exposure and motion "
+                                         "settings override the printer's defaults. If omitted, the resin the "
+                                         "user chose for this printer, if any. Settings passed in this call win over both."},
                 "format": {"type": "string", "enum": ["goo", "ctb", "nanodlp"],
                            "description": "Output format. Default: the printer profile's format. Only "
                                           ".goo files get corrected metadata (time, volume, weight)."},
@@ -247,11 +257,18 @@ SLICE_FLAGS = {
 }
 
 
+def tool_list_resins(args):
+    config = cfg.load_config()
+    rows = [{k: v for k, v in profile.items() if k != "source"} for _rid, profile in sorted(cfg.list_resins().items())]
+    return {"configured": config.get("resin"), "resins": rows, "user_resins_dir": str(cfg.user_resins_dir())}
+
+
 def tool_slice_plates(args):
     config = cfg.load_config()
     printer = printer_from(args, config)
-    # settings: printer profile < user's config < this call
-    args = {**printer.get("slice_defaults", {}), **config.get("slice_defaults", {}), **args}
+    resin = cfg.resolve_resin(args.get("resin"), config, printer.get("id"))
+    # settings: printer profile < user's config < resin profile < this call
+    args = cfg.slice_settings(printer, resin, config, {k: v for k, v in args.items() if k != "resin"})
     if not args.get("format") and not printer.get("formats"):
         raise ValueError(
             f"The printer profile \"{printer.get('name', printer.get('id'))}\" is for arranging only: nemnest has no "
@@ -259,6 +276,8 @@ def tool_slice_plates(args):
             "or pass an explicit format (goo, ctb, nanodlp) to try mslicer at your own risk.")
     fmt = args.get("format") or printer["formats"][0]
     goo_profile = {**printer.get("goo_profile", {}), **config.get("goo_profile", {})}
+    if resin and resin.get("density_g_ml") and goo_profile:
+        goo_profile["resin_density_g_ml"] = resin["density_g_ml"]
     exe = cfg.find_slicer(config)
     if not exe:
         raise RuntimeError(cfg.SLICER_HELP)
@@ -309,11 +328,14 @@ def tool_slice_plates(args):
         done.append({"plate": stl.name, "output": str(out), "bytes": out.stat().st_size,
                      "extent_mm": [round(float(e), 2) for e in extent], "profile_applied": fixed,
                      "log": log[-400:]})
-    return {"printer": plate_of(printer), "format": fmt, "slicer": exe, "sliced": done}
+    used = {k: args[k] for k in SLICE_FLAGS if k in args}
+    return {"printer": plate_of(printer), "resin": (resin or {}).get("name"), "settings": used,
+            "format": fmt, "slicer": exe, "sliced": done}
 
 
 HANDLERS = {
     "list_printers": tool_list_printers,
+    "list_resins": tool_list_resins,
     "scan_folder": tool_scan_folder,
     "arrange_plates": tool_arrange_plates,
     "export_plates": tool_export_plates,

@@ -219,6 +219,8 @@ pytest
 
 The tests generate synthetic models, arrange them through the MCP server and the command line, and measure the distances on the transformed geometry.
 
+Reading the layers of sliced files is done by a small C function (`src/nemnest/_runs.c`), about 50 times faster than the Python one. It is built when nemnest is installed, if a C compiler is available; without one the install still works and the Python reader is used. `python -c "import nemnest.goo as g; print(g.COMPILED)"` tells which one you have. The release downloads always include it.
+
 ### Releasing
 
 Push a `vX.Y.Z` tag: the release workflow builds and tests the Windows and macOS programs (including a rehearsal of the update swap) and attaches them to the release. Then sign it on the maintainer's computer, so that installed programs accept it as an update:

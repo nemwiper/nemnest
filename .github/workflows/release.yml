@@ -18,7 +18,7 @@ env:
   PYINSTALLER_ARGS: >
     --noconfirm --clean --windowed --name nemnest
     --osx-bundle-identifier io.github.nemwiper.nemnest
-    --collect-data nemnest --collect-all tkinterdnd2
+    --collect-data nemnest --collect-binaries nemnest --collect-all tkinterdnd2
     --exclude-module cupy --exclude-module cupyx --exclude-module torch --exclude-module pytest
     --exclude-module cryptography
 

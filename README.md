@@ -18,7 +18,7 @@ Point it at a folder of supported models and it gives you back one merged STL pe
 
 ## Status and a word of caution
 
-This is young software. The placement is checked by automated tests on the real geometry, and the full chain (placement, slicing, printing) has been verified on real prints with **one printer: the Elegoo Saturn 4 Ultra 16K**. Profiles for 36 other popular printers are included for arranging only: slicing for them is not verified.
+This is young software. The placement is checked by automated tests on the real geometry, and the full chain (placement, slicing, printing) has been verified on real prints with **one printer: the Elegoo Saturn 4 Ultra 16K**. Profiles for 37 other popular printers are included for arranging only: slicing for them is not verified.
 
 A wrong print file can ruin a print or damage a vat film. Before the first print on your machine, **open the sliced file in your usual slicer and check the first layers and the settings**. You use this software at your own risk (see the licence).
 
@@ -103,7 +103,8 @@ A simple top view, one plate per screen, no 3D. Import STL files or a whole fold
 - After each import a short summary tells you how many parts were added and how many plates there are.
 - **Optimise** rearranges everything on as few plates as possible (rotation, height grouping and the minimum gap between parts are options; the gap, 0 to 20 mm, is remembered for next time, also by the command line and the MCP server), with a progress bar, the best result so far and a Cancel button that keeps the current layout.
 - **Export plates** writes the merged plate STLs, previews and `layout.json`; **Export and slice** also produces the print files.
-- Pick the printer from the list, or **Add printer** to enter the plate size of your own.
+- **Check slices** looks for islands in a sliced file and shows its layers: see [Checking the slices](#checking-the-slices).
+- Pick the printer and the resin profile from the two lists. **Printers and resins** opens both side by side: add, edit or delete your own printers and your [resin profiles](#resin-profiles).
 
 Drag and drop needs one small extra package: `pip install "nemnest[gui] @ git+https://github.com/nemwiper/nemnest"`, or just `pip install tkinterdnd2`. Without it the window works the same, with the buttons only.
 
@@ -173,7 +174,7 @@ Then ask in plain words, for example: *"Arrange the STLs in this folder on as fe
 nemnest printers
 ```
 
-37 profiles are included. One is **tested on real prints, slicing included**:
+38 profiles are included. One is **tested on real prints, slicing included**:
 
 | Profile | Build volume | Resolution |
 |---|---|---|
@@ -183,7 +184,7 @@ The others are **arranging only**: plate size and height are filled in, so parts
 
 | Brand | Models |
 |---|---|
-| Elegoo | Mars 3, 3 Pro, 4, 4 Ultra, 4 Max, 4 DLP, 5, 5 Ultra; Saturn 2, 3, 3 Ultra, 4, 4 Ultra 12K; Jupiter SE, Jupiter 2 |
+| Elegoo | Mars 2, 3, 3 Pro, 4, 4 Ultra, 4 Max, 4 DLP, 5, 5 Ultra; Saturn 2, 3, 3 Ultra, 4, 4 Ultra 12K; Jupiter SE, Jupiter 2 |
 | Anycubic | Photon Mono 2, 4, 4 Ultra, X 6Ks, M5s, M5s Pro, M7, M7 Pro, M7 Max; Photon P1 |
 | Phrozen | Sonic Mini 8K, Mini 8K S, Mighty 8K, Mighty 12K, Mighty Revo 14K, Mega 8K, Mega 8K S |
 | Creality | Halot-Mage 8K, Halot-Mage Pro, Halot-Mage S 14K |
@@ -200,6 +201,38 @@ nemnest arrange ./supported --plate-size 218.88 122.88 260
 To add a printer properly, copy [the Saturn profile](src/nemnest/printers/elegoo-saturn-4-ultra-16k.json) into your user printers folder (shown by `nemnest printers`), change name, `size_mm`, `resolution_px` and the slicing defaults, then select it with `nemnest config --printer your-id`. The `goo_profile` block holds the `.goo` metadata the manufacturer's slicer writes for that machine (mirroring, per-layer settings, the seconds of mechanical motion per layer used for the time estimate); the reliable way to fill it is to slice the same plate with the manufacturer's slicer and compare.
 
 Profiles verified on real prints are very welcome as pull requests. Please say in the PR what you printed and with which firmware.
+
+## Checking the slices
+
+```bash
+nemnest check ./plates
+```
+
+Looks through sliced `.goo` files for **islands**: regions of a layer with nothing under them. An island cures in mid-resin and ends up stuck to the vat film, or as a blob on the print. Each one is listed with its layer, height, size in pixels and mm², and position.
+
+In the window, **Check slices** opens a layer viewer: the islands are listed largest first, choosing one jumps to its layer and zooms on it, and the mouse wheel or the arrows move through the layers. What has something underneath is grey, what has nothing under it is orange.
+
+It works on the runs the file stores instead of rebuilding each layer image, so a whole 16K plate of about 3000 layers takes around 5 seconds on 6 cores. Islands of a few pixels are slicing noise: by default those under 10 pixels are hidden.
+
+What it cannot tell: whether a support will actually print. A part that depends on a tall thin support is not an island in the file, and is not reported.
+
+## Resin profiles
+
+A resin profile holds the exposure and motion settings of one resin: layer thickness, exposure time, burn-in layers and their exposure, transition layers, lift distance and speeds, waiting times. Create them in the window (**Printers and resins**); nemnest ships none, because the right values depend on the resin and on the printer.
+
+- Settings are applied in this order, each overriding the one before: the printer profile, the resin profile, then anything passed on the command line or in the MCP call. A setting left empty in the resin profile keeps the printer's default.
+- The window remembers the chosen resin **per printer**, so a profile tuned for one machine is not silently used on another.
+- A profile can also record density, bottle price and capacity. The density is used for the resin weight of `.goo` files.
+
+```bash
+nemnest resins
+```
+
+```bash
+nemnest slice ./plates --resin "My resin 50 um"
+```
+
+Profiles are plain JSON files in the `resins` folder next to your config file (`nemnest resins` prints where).
 
 ## How it works
 
@@ -218,6 +251,8 @@ pytest
 ```
 
 The tests generate synthetic models, arrange them through the MCP server and the command line, and measure the distances on the transformed geometry.
+
+Reading the layers of sliced files is done by a small C function (`src/nemnest/_runs.c`), about 50 times faster than the Python one. It is built when nemnest is installed, if a C compiler is available; without one the install still works and the Python reader is used. `python -c "import nemnest.goo as g; print(g.COMPILED)"` tells which one you have. The release downloads always include it.
 
 ### Releasing
 

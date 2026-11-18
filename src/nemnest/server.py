@@ -13,7 +13,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from . import __version__, config as cfg, goo, nest
+from . import __version__, check, config as cfg, goo, nest
 
 
 def printer_from(args: dict, config: dict | None = None) -> dict:
@@ -58,6 +58,12 @@ TOOLS = [
         "name": "list_printers",
         "description": "Lists the available printer profiles (build volume, resolution, whether the "
                        "profile was verified on real prints) and the one currently configured.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "list_resins",
+        "description": "Lists the user's resin profiles (exposure times, layer height, lift settings) "
+                       "and the one currently configured. Profiles are created in the nemnest window.",
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
@@ -162,6 +168,10 @@ TOOLS = [
                 "plates_dir": {"type": "string", "description": "Folder with the plate_NN.stl files."},
                 "plates": {"type": "array", "items": {"type": "integer"},
                            "description": "Plate numbers to slice. If omitted, all."},
+                "resin": {"type": "string",
+                          "description": "Resin profile id or name (see list_resins): its exposure and motion "
+                                         "settings override the printer's defaults. If omitted, the resin the "
+                                         "user chose for this printer, if any. Settings passed in this call win over both."},
                 "format": {"type": "string", "enum": ["goo", "ctb", "nanodlp"],
                            "description": "Output format. Default: the printer profile's format. Only "
                                           ".goo files get corrected metadata (time, volume, weight)."},
@@ -181,6 +191,24 @@ TOOLS = [
                 **PLATE_PROPS,
             },
             "required": ["plates_dir"],
+        },
+    },
+    {
+        "name": "check_slices",
+        "description": "Checks sliced .goo files for islands: regions of a layer with nothing under them, "
+                       "which cure in mid-resin and end up on the vat film or as blobs on the print. Returns, "
+                       "per file, the islands with layer, height, size and position. A whole 16K plate takes "
+                       "seconds. It reads the file as it is: it cannot tell whether supports will print.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file": {"description": "A sliced .goo file, or a list of them.",
+                         "anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+                "plates_dir": {"type": "string", "description": "Instead of file: a folder, to check every .goo in it."},
+                "min_area_px": {"type": "integer",
+                                "description": "Ignore islands smaller than this many pixels (default 10)."},
+                "max_items": {"type": "integer", "description": "Islands listed per file, largest first (default 50)."},
+            },
         },
     },
 ]
@@ -247,11 +275,18 @@ SLICE_FLAGS = {
 }
 
 
+def tool_list_resins(args):
+    config = cfg.load_config()
+    rows = [{k: v for k, v in profile.items() if k != "source"} for _rid, profile in sorted(cfg.list_resins().items())]
+    return {"configured": config.get("resin"), "resins": rows, "user_resins_dir": str(cfg.user_resins_dir())}
+
+
 def tool_slice_plates(args):
     config = cfg.load_config()
     printer = printer_from(args, config)
-    # settings: printer profile < user's config < this call
-    args = {**printer.get("slice_defaults", {}), **config.get("slice_defaults", {}), **args}
+    resin = cfg.resolve_resin(args.get("resin"), config, printer.get("id"))
+    # settings: printer profile < user's config < resin profile < this call
+    args = cfg.slice_settings(printer, resin, config, {k: v for k, v in args.items() if k != "resin"})
     if not args.get("format") and not printer.get("formats"):
         raise ValueError(
             f"The printer profile \"{printer.get('name', printer.get('id'))}\" is for arranging only: nemnest has no "
@@ -259,6 +294,8 @@ def tool_slice_plates(args):
             "or pass an explicit format (goo, ctb, nanodlp) to try mslicer at your own risk.")
     fmt = args.get("format") or printer["formats"][0]
     goo_profile = {**printer.get("goo_profile", {}), **config.get("goo_profile", {})}
+    if resin and resin.get("density_g_ml") and goo_profile:
+        goo_profile["resin_density_g_ml"] = resin["density_g_ml"]
     exe = cfg.find_slicer(config)
     if not exe:
         raise RuntimeError(cfg.SLICER_HELP)
@@ -309,15 +346,51 @@ def tool_slice_plates(args):
         done.append({"plate": stl.name, "output": str(out), "bytes": out.stat().st_size,
                      "extent_mm": [round(float(e), 2) for e in extent], "profile_applied": fixed,
                      "log": log[-400:]})
-    return {"printer": plate_of(printer), "format": fmt, "slicer": exe, "sliced": done}
+    used = {k: args[k] for k in SLICE_FLAGS if k in args}
+    return {"printer": plate_of(printer), "resin": (resin or {}).get("name"), "settings": used,
+            "format": fmt, "slicer": exe, "sliced": done}
+
+
+def slice_files(args) -> list:
+    """The sliced files a check call refers to: `file`, or every .goo of `plates_dir`."""
+    if args.get("file"):
+        files = [Path(f) for f in ([args["file"]] if isinstance(args["file"], str) else args["file"])]
+    elif args.get("plates_dir"):
+        files = sorted(Path(args["plates_dir"]).glob("*.goo"))
+        if not files:
+            raise ValueError(f"No .goo files in {args['plates_dir']}")
+    else:
+        raise ValueError("Pass \"file\" (a sliced .goo) or \"plates_dir\" (a folder of them).")
+    for f in files:
+        if not f.is_file():
+            raise FileNotFoundError(f"File not found: {f}")
+        if f.suffix.lower() != ".goo":
+            raise ValueError(f"Only .goo files can be checked for now: {f.name}")
+    return files
+
+
+def tool_check_slices(args):
+    min_px = int(args.get("min_area_px", 10))
+    limit = int(args.get("max_items", 50))
+    out = []
+    for f in slice_files(args):
+        res = check.check_file(f, workers=int(args["workers"]) if "workers" in args else None)
+        shown = [i for i in res["items"] if i["area_px"] >= min_px]
+        out.append({"file": str(f), "layers": res["layers"], "resolution_px": res["resolution_px"],
+                    "islands": len(shown), "islands_below_threshold": len(res["items"]) - len(shown),
+                    "largest_island_mm2": round(shown[0]["area_mm2"], 3) if shown else 0.0,
+                    "items": [{**i, "area_mm2": round(i["area_mm2"], 4)} for i in shown[:limit]]})
+    return {"min_area_px": min_px, "checked": out}
 
 
 HANDLERS = {
     "list_printers": tool_list_printers,
+    "list_resins": tool_list_resins,
     "scan_folder": tool_scan_folder,
     "arrange_plates": tool_arrange_plates,
     "export_plates": tool_export_plates,
     "slice_plates": tool_slice_plates,
+    "check_slices": tool_check_slices,
 }
 
 

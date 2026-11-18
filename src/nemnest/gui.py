@@ -41,6 +41,7 @@ class Session:
     def __init__(self, printer=None, gap=None, edge=1.0, raft_height=1.0, res=0.5):
         self.config = cfg.load_config()
         self.printer = cfg.resolve_printer(printer, self.config)
+        self.resin = self._remembered_resin()
         gap = self.config.get("gap_mm", 2.0) if gap is None else gap
         self.gap, self.edge, self.raft_height, self.res = cfg.check_gap(gap), edge, raft_height, res
         self.files: list[str] = []          # arrival order; a file listed twice is two copies
@@ -102,8 +103,24 @@ class Session:
             out.append(base if self.files.count(f) == 1 else f"{base} #{seen[f]}")
         return out
 
+    def _remembered_resin(self):
+        try:
+            return cfg.resolve_resin(None, self.config, self.printer.get("id"))
+        except ValueError:          # the remembered profile was deleted
+            return None
+
     def set_printer(self, ref):
         self.printer = cfg.resolve_printer(ref, self.config)
+        self.resin = self._remembered_resin()      # each printer has its own resin choice
+
+    def set_resin(self, ref):
+        """Choose the resin profile used for slicing with the current printer
+        (None = the printer's defaults) and remember it for that printer."""
+        self.resin = cfg.resolve_resin(ref, self.config) if ref else None
+        chosen = dict(self.config.get("resin_by_printer") or {})
+        chosen[self.printer.get("id", "custom")] = self.resin["id"] if self.resin else None
+        self.config["resin_by_printer"] = chosen
+        cfg.save_config({"resin_by_printer": chosen})
 
     def set_gap(self, value) -> bool:
         """Change the minimum distance between parts and remember it.
@@ -180,25 +197,7 @@ class Session:
                                  too_tall=self.too_tall, write_stl=write_stl)
 
 
-def save_printer(name: str, size_mm, resolution_px=None) -> dict:
-    """Store a user printer profile and return it."""
-    name = name.strip()
-    if not name:
-        raise ValueError("Give the printer a name.")
-    size = [float(v) for v in size_mm]
-    if len(size) != 3 or any(v <= 0 for v in size):
-        raise ValueError("The build volume needs three positive numbers (X, Y, Z in mm).")
-    pid = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "printer"
-    profile = {"id": pid, "name": name, "tested": False, "size_mm": size, "formats": []}
-    if resolution_px:
-        px = [int(v) for v in resolution_px]
-        if len(px) != 2 or any(v <= 0 for v in px):
-            raise ValueError("The screen resolution needs two positive whole numbers (X, Y in pixels).")
-        profile["resolution_px"] = px
-    folder = cfg.user_printers_dir()
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / f"{pid}.json").write_text(json.dumps(profile, indent=2) + "\n", encoding="utf-8")
-    return profile
+save_printer = cfg.save_printer      # kept here for callers of the earlier location
 
 
 # ---------------------------------------------------------------- window
@@ -232,6 +231,8 @@ def main(argv=None) -> int:
     # ---- toolbar
     bar = ttk.Frame(root, padding=(8, 6))
     bar.pack(side="top", fill="x")
+    bar2 = ttk.Frame(root, padding=(8, 0, 8, 6))      # printer and resin
+    bar2.pack(side="top", fill="x")
     buttons = {}
 
     def button(key, text, command, parent=bar):
@@ -535,20 +536,37 @@ def main(argv=None) -> int:
             sliced = None
             if slice_too:
                 from . import server
-                sliced = server.tool_slice_plates({"plates_dir": folder, "printer": session.printer})
+                args = {"plates_dir": folder, "printer": session.printer}
+                if session.resin:
+                    args["resin"] = session.resin
+                sliced = server.tool_slice_plates(args)
             return result, sliced
 
         def done(value):
             result, sliced = value
+            if sliced:
+                state["sliced_dir"] = folder          # where "Check slices…" opens
             text = f"{result['plates_count']} plates written to\n{folder}"
             if sliced:
                 total = sum((s["profile_applied"] or {}).get("printing_time_s", 0) for s in sliced["sliced"])
                 text += f"\n\n{len(sliced['sliced'])} print files ({sliced['format']})"
+                used = sliced.get("settings", {})
+                text += f"\nResin: {sliced.get('resin') or 'printer defaults'}"
+                if "exposure_time_s" in used:
+                    text += f" (exposure {used['exposure_time_s']:g} s"
+                    if "first_exposure_time_s" in used:
+                        text += f", burn-in {used['first_exposure_time_s']:g} s"
+                    text += ")"
                 if total:
                     text += f", about {total // 3600} h {total % 3600 // 60:02d} min of printing"
                 text += ".\nCheck the first layers in your usual slicer before the first print."
             messagebox.showinfo("nemnest", text)
         run("Slicing… this takes a few minutes" if slice_too else "Writing the plates…", work, done)
+
+    def check_slices():
+        """Look at a sliced file layer by layer and list its islands."""
+        from . import checkview
+        checkview.open_checker(root, start_dir=state.get("sliced_dir"))
 
     printer_var = tk.StringVar()
 
@@ -559,42 +577,271 @@ def main(argv=None) -> int:
         pid = printer_names().get(printer_var.get())
         if pid and pid != session.printer.get("id"):
             session.set_printer(pid)
+            resin_var.set(session.resin["name"] if session.resin else NO_RESIN)
             state["plate"] = 0
             run("Rearranging…", session.layout)
 
-    def add_printer():
-        win = tk.Toplevel(root)
-        win.title("Add a printer")
-        win.transient(root)
+    resin_var = tk.StringVar()
+    NO_RESIN = "Printer defaults"
+
+    def resin_names():
+        return {r.get("name", rid): rid for rid, r in sorted(cfg.list_resins().items())}
+
+    def pick_resin(_event=None):
+        rid = resin_names().get(resin_var.get())
+        if rid != (session.resin or {}).get("id"):
+            session.set_resin(rid)
+
+    def refresh_choices():
+        """Reload both lists after profiles were added, edited or deleted."""
+        printers = cfg.list_printers()
+        combo["values"] = list(printer_names())
+        current = session.printer.get("id")
+        before = (session.printer.get("size_mm"), session.gap)
+        session.set_printer(current if current in printers else None)
+        printer_var.set(session.printer.get("name", ""))
+        resins = cfg.list_resins()
+        resin_combo["values"] = [NO_RESIN] + list(resin_names())
+        rid = (session.resin or {}).get("id")
+        session.resin = dict(resins[rid]) if rid in resins else None
+        resin_var.set(session.resin["name"] if session.resin else NO_RESIN)
+        if (session.printer.get("size_mm"), session.gap) != before and session.files:
+            state["plate"] = 0
+            run("Rearranging…", session.layout)
+        else:
+            refresh()
+
+    def dialog(parent, title):
+        win = tk.Toplevel(parent)
+        win.title(title)
+        win.transient(parent)
         win.resizable(False, False)
         frame = ttk.Frame(win, padding=14)
-        frame.pack()
-        fields = {}
-        rows = (("name", "Name", 28), ("x", "Plate width X (mm)", 10), ("y", "Plate depth Y (mm)", 10),
-                ("z", "Maximum height Z (mm)", 10), ("px", "Screen pixels X (optional)", 10),
-                ("py", "Screen pixels Y (optional)", 10))
-        for r, (key, text, width) in enumerate(rows):
-            ttk.Label(frame, text=text).grid(row=r, column=0, sticky="w", pady=2, padx=(0, 10))
-            fields[key] = ttk.Entry(frame, width=width)
-            fields[key].grid(row=r, column=1, sticky="w", pady=2)
-        ttk.Label(frame, text="The pixel resolution is only needed for slicing.",
-                  foreground="#666").grid(row=len(rows), column=0, columnspan=2, sticky="w", pady=(6, 10))
+        frame.pack(fill="both", expand=True)
+        return win, frame
+
+    def field(frame, row, col, text, value="", width=10):
+        ttk.Label(frame, text=text).grid(row=row, column=col, sticky="w", pady=2, padx=(0, 8))
+        entry = ttk.Entry(frame, width=width)
+        entry.insert(0, "" if value is None else f"{value:g}" if isinstance(value, float) else str(value))
+        entry.grid(row=row, column=col + 1, sticky="w", pady=2, padx=(0, 18))
+        return entry
+
+    def edit_printer(parent, pid=None, done=None):
+        old = cfg.list_printers().get(pid) if pid else None
+        win, frame = dialog(parent, "Edit printer" if old else "Add a printer")
+        size = (old or {}).get("size_mm") or ["", "", ""]
+        px = (old or {}).get("resolution_px") or ["", ""]
+        fields = {"name": field(frame, 0, 0, "Name", (old or {}).get("name", ""), 30),
+                  "x": field(frame, 1, 0, "Plate width X (mm)", size[0]),
+                  "y": field(frame, 2, 0, "Plate depth Y (mm)", size[1]),
+                  "z": field(frame, 3, 0, "Maximum height Z (mm)", size[2]),
+                  "px": field(frame, 4, 0, "Screen pixels X", px[0]),
+                  "py": field(frame, 5, 0, "Screen pixels Y", px[1])}
+        ttk.Label(frame, text="Slicing").grid(row=6, column=0, sticky="w", pady=2, padx=(0, 8))
+        choices = ["Arranging only"] + list(cfg.SLICE_FORMATS)
+        fmt = tk.StringVar(value=((old or {}).get("formats") or ["Arranging only"])[0])
+        ttk.Combobox(frame, textvariable=fmt, values=choices, state="readonly", width=16).grid(
+            row=6, column=1, sticky="w", pady=2)
+        note = "The pixels are only needed for slicing. Choosing a slicing format lets nemnest write\n" \
+               "print files for this printer with mslicer: untested unless the profile says otherwise,\n" \
+               "so check the first print file in your usual slicer."
+        if old and old.get("source") == "built-in":
+            note += "\nThis is a built-in profile: your changes are saved as your own copy of it."
+        ttk.Label(frame, text=note, foreground="#666", justify="left").grid(
+            row=7, column=0, columnspan=2, sticky="w", pady=(8, 10))
 
         def save():
             try:
-                px = [fields["px"].get().strip(), fields["py"].get().strip()]
-                profile = save_printer(fields["name"].get(), [fields[k].get().replace(",", ".") for k in "xyz"],
-                                       px if all(px) else None)
+                profile = cfg.save_printer(
+                    fields["name"].get(), [fields[k].get() for k in "xyz"],
+                    [fields["px"].get(), fields["py"].get()],
+                    slice_format="" if fmt.get() == choices[0] else fmt.get(), replace_id=pid)
             except ValueError as exc:
                 messagebox.showerror("nemnest", f"Please check the values: {exc}", parent=win)
                 return
             win.destroy()
-            combo["values"] = list(printer_names())
-            printer_var.set(profile["name"])
-            pick_printer()
-        ttk.Button(frame, text="Save", command=save).grid(row=len(rows) + 1, column=1, sticky="e")
-        ttk.Button(frame, text="Cancel", command=win.destroy).grid(row=len(rows) + 1, column=0, sticky="e", padx=6)
+            if done:
+                done(profile)
+        row = ttk.Frame(frame)
+        row.grid(row=8, column=0, columnspan=2, sticky="e")
+        ttk.Button(row, text="Cancel", command=win.destroy).pack(side="left", padx=6)
+        ttk.Button(row, text="Save", command=save).pack(side="left")
+        centre(win)
         fields["name"].focus_set()
+        win.grab_set()
+
+    def edit_resin(parent, rid=None, done=None):
+        old = cfg.list_resins().get(rid) if rid else None
+        win, frame = dialog(parent, "Edit resin profile" if old else "Add a resin profile")
+        o, st = old or {}, (old or {}).get("settings", {})
+        top = ttk.Frame(frame)
+        top.grid(row=0, column=0, columnspan=2, sticky="w")
+        name = field(top, 0, 0, "Profile name", o.get("name", ""), 44)
+        brand = field(top, 1, 0, "Brand", o.get("brand", ""), 24)
+        color = field(top, 2, 0, "Colour", o.get("color", ""), 24)
+        notes = field(top, 3, 0, "Notes", o.get("notes", ""), 44)
+        entries = {}
+        groups = (("Burn-in layers", ("first_layers", "first_exposure_time_s", "transition_layers",
+                                      "first_wait_before_cure_s")),
+                  ("Normal layers", ("layer_height_mm", "exposure_time_s", "lift_distance_mm", "lift_speed_mm_min",
+                                     "retract_speed_mm_min", "wait_before_cure_s")))
+        short = {"first_layers": "Number of layers", "first_exposure_time_s": "Exposure time (s)",
+                 "first_wait_before_cure_s": "Wait before exposure (s)"}
+        for col, (title, keys) in enumerate(groups):
+            box = ttk.LabelFrame(frame, text=title, padding=8)
+            box.grid(row=1, column=col, sticky="nw", padx=(0, 10 if col == 0 else 0), pady=(10, 0))
+            for r, key in enumerate(keys):
+                entries[key] = field(box, r, 0, short.get(key, cfg.RESIN_SETTINGS[key][0]), st.get(key, ""), 9)
+        box = ttk.LabelFrame(frame, text="Resin", padding=8)
+        box.grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        extras = {"density_g_ml": field(box, 0, 0, "Density (g/ml)", o.get("density_g_ml", ""), 8),
+                  "bottle_price": field(box, 0, 2, "Bottle price", o.get("bottle_price", ""), 8),
+                  "currency": field(box, 0, 4, "Currency", o.get("currency", ""), 6),
+                  "bottle_capacity_l": field(box, 0, 6, "Bottle capacity (l)", o.get("bottle_capacity_l", ""), 6)}
+        ttk.Label(frame, text="Leave a setting empty to keep the printer's own default for it.",
+                  foreground="#666").grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 10))
+
+        def save():
+            try:
+                profile = cfg.save_resin(name.get(), {k: e.get() for k, e in entries.items()}, brand.get(),
+                                         color.get(), notes.get(), {k: e.get() for k, e in extras.items()},
+                                         replace_id=rid)
+            except ValueError as exc:
+                messagebox.showerror("nemnest", f"Please check the values: {exc}", parent=win)
+                return
+            win.destroy()
+            if done:
+                done(profile)
+        row = ttk.Frame(frame)
+        row.grid(row=4, column=0, columnspan=2, sticky="e")
+        ttk.Button(row, text="Cancel", command=win.destroy).pack(side="left", padx=6)
+        ttk.Button(row, text="Save", command=save).pack(side="left")
+        centre(win)
+        name.focus_set()
+        win.grab_set()
+
+    def manage():
+        """Printers on one side, resin profiles on the other."""
+        if state["busy"]:
+            return
+        win = tk.Toplevel(root)
+        win.title("Printers and resins")
+        win.transient(root)
+        win.minsize(900, 420)
+        frame = ttk.Frame(win, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(0, weight=1, uniform="half")
+        frame.columnconfigure(1, weight=1, uniform="half")
+        frame.rowconfigure(0, weight=1)
+
+        def panel(col, title, columns):
+            box = ttk.LabelFrame(frame, text=title, padding=8)
+            box.grid(row=0, column=col, sticky="nsew", padx=(0, 6) if col == 0 else (6, 0))
+            box.rowconfigure(0, weight=1)
+            box.columnconfigure(0, weight=1)
+            view = ttk.Treeview(box, columns=[c[0] for c in columns], show="headings", height=14,
+                                selectmode="browse")
+            for key, text, width, anchor in columns:
+                view.heading(key, text=text)
+                view.column(key, width=width, anchor=anchor, stretch=key == "name")
+            scroll = ttk.Scrollbar(box, orient="vertical", command=view.yview)
+            view.configure(yscrollcommand=scroll.set)
+            view.grid(row=0, column=0, sticky="nsew")
+            scroll.grid(row=0, column=1, sticky="ns")
+            buttons_row = ttk.Frame(box)
+            buttons_row.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+            return view, buttons_row
+
+        printers_view, printers_row = panel(0, "Printers", (
+            ("name", "Name", 200, "w"), ("size", "Plate (mm)", 150, "w"), ("kind", "", 96, "w")))
+        resins_view, resins_row = panel(1, "Resin profiles", (
+            ("name", "Name", 230, "w"), ("layer", "Layer", 60, "e"), ("exposure", "Exposure", 70, "e"),
+            ("burn", "Burn-in", 80, "e")))
+
+        def fill(select_printer=None, select_resin=None):
+            printers_view.delete(*printers_view.get_children())
+            for pid, pr in sorted(cfg.list_printers().items(), key=lambda kv: kv[1].get("name", kv[0]).lower()):
+                kind = "built-in" if pr["source"] == "built-in" else "yours"
+                kind += ", slicing" if pr.get("formats") else ""
+                printers_view.insert("", "end", iid=pid, values=(
+                    pr.get("name", pid), " x ".join(f"{v:g}" for v in pr["size_mm"]), kind))
+            resins_view.delete(*resins_view.get_children())
+            for rid, rs in sorted(cfg.list_resins().items(), key=lambda kv: kv[1].get("name", kv[0]).lower()):
+                st = rs.get("settings", {})
+                resins_view.insert("", "end", iid=rid, values=(
+                    rs.get("name", rid),
+                    f"{st['layer_height_mm']:g} mm" if "layer_height_mm" in st else "",
+                    f"{st['exposure_time_s']:g} s" if "exposure_time_s" in st else "",
+                    f"{st['first_layers']} x {st['first_exposure_time_s']:g} s"
+                    if "first_layers" in st and "first_exposure_time_s" in st else ""))
+            for view, wanted in ((printers_view, select_printer or session.printer.get("id")),
+                                 (resins_view, select_resin or (session.resin or {}).get("id"))):
+                if wanted and view.exists(wanted):
+                    view.selection_set(wanted)
+                    view.see(wanted)
+
+        def chosen(view):
+            picked = view.selection()
+            return picked[0] if picked else None
+
+        def printer_saved(profile):
+            fill(select_printer=profile["id"])
+            win.grab_set()
+
+        def resin_saved(profile):
+            fill(select_resin=profile["id"])
+            win.grab_set()
+
+        def remove_printer():
+            pid = chosen(printers_view)
+            if not pid:
+                return
+            pr = cfg.list_printers()[pid]
+            if pr["source"] == "built-in":
+                messagebox.showinfo("nemnest", "Built-in printers cannot be deleted. You can edit one: "
+                                               "your changes are saved as your own copy.", parent=win)
+                return
+            if messagebox.askyesno("nemnest", f"Delete the printer \"{pr.get('name', pid)}\"?", parent=win):
+                cfg.delete_printer(pid)
+                fill()
+
+        def remove_resin():
+            rid = chosen(resins_view)
+            if rid and messagebox.askyesno(
+                    "nemnest", f"Delete the resin profile \"{cfg.list_resins()[rid].get('name', rid)}\"?", parent=win):
+                cfg.delete_resin(rid)
+                fill()
+
+        def use_selected():
+            pid, rid = chosen(printers_view), chosen(resins_view)
+            if pid:
+                session.set_printer(pid)
+            if rid:
+                session.set_resin(rid)      # for the printer just chosen
+            close()
+
+        def close():
+            win.destroy()
+            refresh_choices()
+
+        for text, command in (("Add…", lambda: edit_printer(win, None, printer_saved)),
+                              ("Edit…", lambda: chosen(printers_view) and edit_printer(win, chosen(printers_view), printer_saved)),
+                              ("Delete", remove_printer)):
+            ttk.Button(printers_row, text=text, command=command).pack(side="left", padx=(0, 6))
+        for text, command in (("Add…", lambda: edit_resin(win, None, resin_saved)),
+                              ("Edit…", lambda: chosen(resins_view) and edit_resin(win, chosen(resins_view), resin_saved)),
+                              ("Delete", remove_resin)):
+            ttk.Button(resins_row, text=text, command=command).pack(side="left", padx=(0, 6))
+        printers_view.bind("<Double-1>", lambda _e: chosen(printers_view) and edit_printer(win, chosen(printers_view), printer_saved))
+        resins_view.bind("<Double-1>", lambda _e: chosen(resins_view) and edit_resin(win, chosen(resins_view), resin_saved))
+        foot_row = ttk.Frame(frame)
+        foot_row.grid(row=1, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(foot_row, text="Use selected", command=use_selected).pack(side="left", padx=6)
+        ttk.Button(foot_row, text="Close", command=close).pack(side="left")
+        win.protocol("WM_DELETE_WINDOW", close)
+        fill()
+        centre(win)
         win.grab_set()
 
     button("add", "Add STL…", add_stl)
@@ -605,14 +852,19 @@ def main(argv=None) -> int:
     button("optimise", "Optimise…", optimise)
     button("export", "Export plates…", export)
     button("slice", "Export and slice…", lambda: export(slice_too=True))
-    button("add_printer", "Add printer…", add_printer, parent=bar)
-    buttons["add_printer"].pack_forget()
-    buttons["add_printer"].pack(side="right")
-    combo = ttk.Combobox(bar, textvariable=printer_var, values=list(printer_names()), state="readonly", width=30)
-    combo.pack(side="right", padx=6)
-    ttk.Label(bar, text="Printer").pack(side="right")
+    button("check", "Check slices…", check_slices)
+    ttk.Label(bar2, text="Printer").pack(side="left")
+    combo = ttk.Combobox(bar2, textvariable=printer_var, values=list(printer_names()), state="readonly", width=34)
+    combo.pack(side="left", padx=(6, 16))
     printer_var.set(session.printer.get("name", ""))
     combo.bind("<<ComboboxSelected>>", pick_printer)
+    ttk.Label(bar2, text="Resin").pack(side="left")
+    resin_combo = ttk.Combobox(bar2, textvariable=resin_var, values=[NO_RESIN] + list(resin_names()),
+                               state="readonly", width=40)
+    resin_combo.pack(side="left", padx=(6, 16))
+    resin_var.set(session.resin["name"] if session.resin else NO_RESIN)
+    resin_combo.bind("<<ComboboxSelected>>", pick_resin)
+    button("manage", "Printers and resins…", manage, parent=bar2)
 
 
     # ---- plate navigation: wheel, arrows, page keys

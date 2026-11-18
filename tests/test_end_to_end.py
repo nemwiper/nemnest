@@ -353,3 +353,93 @@ def test_gap_setting(workspace, capsys):
     assert layout["settings"]["gap_mm"] == 3.0 and measure_layout(layout)[0] >= 3.0 - 0.75
     cfg.save_config({"gap_mm": 2.0})
     capsys.readouterr()
+
+
+def test_resin_profiles_and_slicing_priority(workspace):
+    from nemnest import server
+    resin = cfg.save_resin("Test Clear Blue 50 um", {"layer_height_mm": "0,05", "exposure_time_s": "3",
+                                                     "first_layers": "5", "first_exposure_time_s": 35,
+                                                     "transition_layers": 0, "wait_before_cure_s": "",
+                                                     "lift_speed_mm_min": None},
+                           brand="Elegoo", color="Clear Blue", extras={"bottle_price": "38,87", "currency": "EUR"})
+    assert resin["id"] == "test-clear-blue-50-um"
+    assert resin["settings"] == {"layer_height_mm": 0.05, "exposure_time_s": 3.0, "first_layers": 5,
+                                 "first_exposure_time_s": 35.0, "transition_layers": 0}   # empty ones left out
+    assert resin["bottle_price"] == 38.87 and cfg.resolve_resin("Test Clear Blue 50 um")["brand"] == "Elegoo"
+    assert any(r["id"] == resin["id"] for r in server.tool_list_resins({})["resins"])
+
+    printer = cfg.resolve_printer("elegoo-saturn-4-ultra-16k")
+    config = cfg.load_config()
+    plain = cfg.slice_settings(printer, None, config)
+    assert plain["exposure_time_s"] == 2.2 and plain["wait_before_cure_s"] == 1.2
+    with_resin = cfg.slice_settings(printer, resin, config)
+    assert with_resin["exposure_time_s"] == 3.0 and with_resin["first_exposure_time_s"] == 35.0
+    assert with_resin["wait_before_cure_s"] == 1.2                 # not in the resin: printer default kept
+    assert cfg.slice_settings(printer, resin, config, {"exposure_time_s": 2.5})["exposure_time_s"] == 2.5
+
+    with pytest.raises(ValueError, match="already"):
+        cfg.save_resin("test clear blue 50 um", {})
+    with pytest.raises(ValueError, match="number"):
+        cfg.save_resin("Broken", {"exposure_time_s": "three"})
+    with pytest.raises(ValueError, match="whole"):
+        cfg.save_resin("Broken", {"first_layers": "2.5"})
+    renamed = cfg.save_resin("Test Clear Blue", resin["settings"], replace_id=resin["id"])
+    assert renamed["id"] == "test-clear-blue" and resin["id"] not in cfg.list_resins()
+    cfg.delete_resin("test-clear-blue")
+    assert "test-clear-blue" not in cfg.list_resins()
+    with pytest.raises(ValueError):
+        cfg.resolve_resin("test-clear-blue")
+    assert cfg.resolve_resin(None, {"resin": None}) is None
+
+
+def test_printers_can_be_edited_and_deleted(workspace):
+    mars = cfg.resolve_printer("Elegoo Mars 2")
+    assert mars["size_mm"] == [130.56, 82.62, 150.0] and mars["resolution_px"] == [2560, 1620]
+    made = cfg.save_printer("Shop Printer", ["200", "120,5", "240"], ["", ""])
+    assert made["id"] == "shop-printer" and made["size_mm"] == [200.0, 120.5, 240.0] and "resolution_px" not in made
+    edited = cfg.save_printer("Shop Printer", [201, 120.5, 240], ["7680", "4320"], slice_format="ctb",
+                              replace_id="shop-printer")
+    assert edited["id"] == "shop-printer" and edited["formats"] == ["ctb"] and edited["resolution_px"] == [7680, 4320]
+    renamed = cfg.save_printer("Shop Printer 2", [201, 120.5, 240], ["7680", "4320"], replace_id="shop-printer")
+    assert renamed["id"] == "shop-printer-2" and renamed["formats"] == ["ctb"]      # kept from before
+    assert "shop-printer" not in cfg.list_printers()
+    assert cfg.delete_printer("shop-printer-2") == "deleted"
+    with pytest.raises(ValueError, match="already"):
+        cfg.save_printer("Elegoo Mars 2", [1, 1, 1])
+    with pytest.raises(ValueError, match="both"):
+        cfg.save_printer("Half", [1, 1, 1], ["100", ""])
+
+    # editing a built-in stores the user's own copy under the same id; deleting it restores the original
+    mine = cfg.save_printer("Elegoo Mars 2", [130, 82, 150], [2560, 1620], replace_id="elegoo-mars-2")
+    assert mine["id"] == "elegoo-mars-2" and cfg.resolve_printer("elegoo-mars-2")["size_mm"] == [130.0, 82.0, 150.0]
+    assert cfg.list_printers()["elegoo-mars-2"]["source"] != "built-in"
+    assert cfg.delete_printer("elegoo-mars-2") == "restored"
+    assert cfg.resolve_printer("elegoo-mars-2")["size_mm"] == [130.56, 82.62, 150.0]
+    with pytest.raises(ValueError, match="Built-in"):
+        cfg.delete_printer("elegoo-mars-2")
+
+    # a tested profile whose plate is changed is no longer the verified machine
+    saturn = cfg.resolve_printer("elegoo-saturn-4-ultra-16k")
+    changed = cfg.save_printer(saturn["name"], [210, 118, 220], saturn["resolution_px"], replace_id=saturn["id"])
+    assert changed["tested"] is False
+    cfg.delete_printer(saturn["id"])
+    assert cfg.resolve_printer(saturn["id"])["tested"] is True
+
+
+def test_window_session_remembers_the_resin(workspace):
+    from nemnest import gui
+    resin = cfg.save_resin("Session Resin", {"exposure_time_s": 2.8})
+    s = gui.Session()
+    assert s.resin is None
+    s.set_resin(resin["id"])
+    assert gui.Session().resin["name"] == "Session Resin"        # remembered for next time
+    s.set_printer("elegoo-mars-2")
+    assert s.resin is None                                        # ... but only for the printer it was chosen on
+    s.set_printer("elegoo-saturn-4-ultra-16k")
+    assert s.resin["name"] == "Session Resin"
+    from nemnest import server
+    assert cfg.resolve_resin(None, cfg.load_config(), "elegoo-mars-2") is None
+    cfg.delete_resin(resin["id"])
+    assert gui.Session().resin is None                            # a deleted profile is not an error
+    s.set_resin(None)
+    assert cfg.load_config()["resin_by_printer"]["elegoo-saturn-4-ultra-16k"] is None

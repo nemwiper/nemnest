@@ -78,7 +78,7 @@ class GooFile:
     def lit_pixels(self, n: int) -> float:
         """Lit pixels of layer n (grey pixels count proportionally)."""
         lengths, values = self._runs(n)
-        return float(np.dot(np.array(lengths, dtype=np.float64), np.array(values, dtype=np.float64)) / 255.0)
+        return float(np.dot(lengths.astype(np.float64), values.astype(np.float64)) / 255.0)
 
     def volume_mm3(self, max_samples: int = 200) -> float:
         """Volume of cured resin. The first layers are all counted, the rest
@@ -96,20 +96,53 @@ class GooFile:
         """Layer n as a uint8 array of shape (y_resolution, x_resolution)."""
         lengths, values = self._runs(n)
         h = self.header
-        flat = np.repeat(np.array(values, dtype=np.uint8), np.array(lengths, dtype=np.int64))
+        flat = np.repeat(values, lengths)
         want = h["x_resolution"] * h["y_resolution"]
         if flat.size != want:
             raise ValueError(f"layer {n}: {flat.size} pixels decoded, expected {want}")
         return flat.reshape(h["y_resolution"], h["x_resolution"])
 
-    def _runs(self, n: int):
+    def _data(self, n: int) -> bytes:
         info = self.layers[n]
         self.f.seek(info["data_offset"])
-        data = self.f.read(info["data_length"])
-        lengths, values = [], []
-        color = 0
-        k = 0
-        end = len(data)
+        return self.f.read(info["data_length"])
+
+    def _runs(self, n: int):
+        """Runs of layer n as two arrays: lengths (int64) and grey values (uint8)."""
+        return decode_runs(self._data(n))
+
+
+def _load_compiled():
+    """The compiled run decoder (`_runs.c`), if it was built for this install."""
+    import ctypes
+    import importlib.util
+    import os
+    if os.environ.get("NEMNEST_PURE_PYTHON"):
+        return None
+    try:
+        spec = importlib.util.find_spec("nemnest._runs")
+        if spec is None or not spec.origin:
+            return None
+        lib = ctypes.CDLL(spec.origin)
+        fn = lib.nemnest_goo_runs
+        fn.restype = ctypes.c_int64
+        fn.argtypes = [ctypes.c_char_p, ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p]
+        return fn
+    except Exception:          # not built, or not loadable here: the Python decoder does the job
+        return None
+
+
+_compiled = _load_compiled()
+COMPILED = _compiled is not None
+
+
+def decode_runs_python(data: bytes):
+    """Run-length decoding of one layer in plain Python (slow, always available)."""
+    lengths, values = [], []
+    color = 0
+    k = 0
+    end = len(data)
+    try:
         while k < end:
             head = data[k]
             kind = head >> 6
@@ -143,7 +176,23 @@ class GooFile:
             k += 1
             lengths.append(length)
             values.append(color)
-        return lengths, values
+    except IndexError:
+        raise ValueError("truncated layer data") from None
+    return np.asarray(lengths, dtype=np.int64), np.asarray(values, dtype=np.uint8)
+
+
+def decode_runs(data: bytes):
+    """Run-length decoding of one layer: (lengths int64, grey values uint8).
+    Uses the compiled decoder when it is available, about 50 times faster."""
+    if _compiled is None:
+        return decode_runs_python(data)
+    n = len(data)
+    lengths = np.empty(n, dtype=np.int64)       # a run takes at least one byte
+    values = np.empty(n, dtype=np.uint8)
+    count = _compiled(data, n, lengths.ctypes.data, values.ctypes.data)
+    if count < 0:
+        raise ValueError("truncated layer data")
+    return lengths[:count].copy(), values[:count].copy()
 
 
 def exposure_schedule(count, bottom_layers, bottom_time, normal_time, transition_layers):

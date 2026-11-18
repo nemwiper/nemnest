@@ -1,4 +1,4 @@
-"""Command line: `nemnest scan|arrange|export|slice|printers|config|gui|mcp`."""
+"""Command line: `nemnest scan|arrange|export|slice|check|printers|resins|config|gui|mcp`."""
 from __future__ import annotations
 
 import argparse
@@ -45,6 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("printers", help="list the printer profiles")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("resins", help="list your resin profiles")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("scan", help="list the STLs of a folder with size and fit, without writing anything")
@@ -95,6 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("plates_dir", help="folder with the plate_NN.stl files")
     _plate_args(p)
     p.add_argument("--plates", nargs="+", type=int, help="plate numbers (default: all)")
+    p.add_argument("--resin", help="resin profile id or name (default: the configured one, if any)")
     p.add_argument("--format", choices=["goo", "ctb", "nanodlp"])
     p.add_argument("--layer-height", type=float, dest="layer_height_mm", metavar="MM")
     p.add_argument("--exposure", type=float, dest="exposure_time_s", metavar="S")
@@ -104,8 +108,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--wait-before-cure", type=float, dest="wait_before_cure_s", metavar="S")
     p.add_argument("--json", action="store_true")
 
+    p = sub.add_parser("check", help="look for islands in sliced .goo files")
+    p.add_argument("files", nargs="+", help="sliced .goo files, or a folder of them")
+    p.add_argument("--min-px", type=int, default=10, help="ignore islands smaller than this many pixels (default 10)")
+    p.add_argument("--all", action="store_true", help="list every island instead of the 20 largest per file")
+    p.add_argument("--json", action="store_true")
+
     p = sub.add_parser("config", help="show or change the user configuration")
     p.add_argument("--printer", help="set the default printer profile")
+    p.add_argument("--resin", help="set the default resin profile (\"none\" to clear it)")
     p.add_argument("--slicer", help="set the path of the mslicer command-line slicer")
     p.add_argument("--optimize-height", choices=["on", "off"], help="set the default for height optimisation")
     p.add_argument("--gap", type=float, help="set the default minimum distance between parts, mm")
@@ -129,6 +140,22 @@ def cmd_printers(ns, server):
         px = " x ".join(str(v) for v in p["resolution_px"]) if p["resolution_px"] else "-"
         print(f"{mark} {p['id']:<32} {size} mm   {px} px   {'tested, slicing' if p['tested'] else 'arranging only'}")
     print(f"\n* = default. Add your own profiles in {res['user_printers_dir']}")
+
+
+def cmd_resins(ns, server):
+    res = server.tool_list_resins({})
+    if ns.json:
+        return res
+    for r in res["resins"]:
+        mark = "*" if r["id"] == res["configured"] else " "
+        s = r.get("settings", {})
+        text = ", ".join(f"{label} {s[key]:g}{unit}" for key, label, unit in (
+            ("layer_height_mm", "layer", " mm"), ("exposure_time_s", "exposure", " s"),
+            ("first_layers", "burn-in layers", ""), ("first_exposure_time_s", "burn-in", " s")) if key in s)
+        print(f"{mark} {r['id']:<40} {text}")
+    if not res["resins"]:
+        print("No resin profiles yet: create one in the window (nemnest gui, Printers and resins).")
+    print(f"\n* = default. Profiles are stored in {res['user_resins_dir']}")
 
 
 def cmd_scan(ns, server):
@@ -186,7 +213,7 @@ def cmd_export(ns, server):
 
 def cmd_slice(ns, server):
     args = _common(ns, {"plates_dir": ns.plates_dir})
-    for key in ("plates", "format", "layer_height_mm", "exposure_time_s", "first_exposure_time_s",
+    for key in ("plates", "resin", "format", "layer_height_mm", "exposure_time_s", "first_exposure_time_s",
                 "first_layers", "transition_layers", "wait_before_cure_s"):
         if getattr(ns, key) is not None:
             args[key] = getattr(ns, key)
@@ -208,10 +235,30 @@ def cmd_slice(ns, server):
         print(f"\ntotal: {_hms(total_s)}" + (f", {total_ml:.1f} ml of resin" if total_ml else ""))
 
 
+def cmd_check(ns, server):
+    import os
+    files = []
+    for f in ns.files:
+        files += [str(p) for p in server.slice_files({"plates_dir": f})] if os.path.isdir(f) else [f]
+    res = server.tool_check_slices({"file": files, "min_area_px": ns.min_px, "max_items": 10 ** 9 if ns.all else 20})
+    if ns.json:
+        return res
+    for r in res["checked"]:
+        print(f"{r['file']}: {r['layers']} layers, {r['islands']} islands of {ns.min_px} px or more"
+              + (f" ({r['islands_below_threshold']} smaller ones ignored)" if r["islands_below_threshold"] else ""))
+        for i in r["items"]:
+            print(f"   layer {i['layer']:>5}  z {i['z_mm']:7.2f} mm  {i['area_px']:>7} px  {i['area_mm2']:7.3f} mm2"
+                  f"   at x {i['x'][0]}-{i['x'][1]}, y {i['y'][0]}-{i['y'][1]}")
+        if r["islands"] > len(r["items"]):
+            print(f"   ... and {r['islands'] - len(r['items'])} more (use --all)")
+
+
 def cmd_config(ns, server):
     changes = {}
     if ns.printer:
         changes["printer"] = cfg.resolve_printer(ns.printer)["id"]
+    if ns.resin:
+        changes["resin"] = None if ns.resin.lower() == "none" else cfg.resolve_resin(ns.resin)["id"]
     if ns.slicer:
         changes["slicer_exe"] = ns.slicer
     if ns.optimize_height:
@@ -225,8 +272,9 @@ def cmd_config(ns, server):
     config = cfg.load_config()
     print(f"config file : {cfg.config_path()}{'' if cfg.config_path().is_file() else '  (not created yet)'}")
     print(f"printer     : {config.get('printer')}")
+    print(f"resin       : {config.get('resin') or 'none (printer defaults)'}")
     print(f"slicer      : {cfg.find_slicer(config) or 'NOT FOUND'}")
-    print(f"settings    : {json.dumps({k: v for k, v in config.items() if k not in ('printer', 'slicer_exe')})}")
+    print(f"settings    : {json.dumps({k: v for k, v in config.items() if k not in ('printer', 'resin', 'slicer_exe')})}")
     if changes.get("slicer_exe") and not cfg.find_slicer(config):
         print("warning: that slicer path does not exist", file=sys.stderr)
 
@@ -240,8 +288,8 @@ def main(argv=None) -> int:
     if ns.command == "mcp":
         server.main()
         return 0
-    command = {"printers": cmd_printers, "scan": cmd_scan, "arrange": cmd_arrange,
-               "export": cmd_export, "slice": cmd_slice, "config": cmd_config}[ns.command]
+    command = {"printers": cmd_printers, "resins": cmd_resins, "scan": cmd_scan, "arrange": cmd_arrange,
+               "export": cmd_export, "slice": cmd_slice, "check": cmd_check, "config": cmd_config}[ns.command]
     try:
         result = command(ns, server)
     except (ValueError, FileNotFoundError, RuntimeError) as exc:

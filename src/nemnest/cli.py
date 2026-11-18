@@ -1,4 +1,4 @@
-"""Command line: `nemnest scan|arrange|export|slice|printers|resins|config|gui|mcp`."""
+"""Command line: `nemnest scan|arrange|export|slice|check|printers|resins|config|gui|mcp`."""
 from __future__ import annotations
 
 import argparse
@@ -106,6 +106,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--first-layers", type=int, dest="first_layers", metavar="N")
     p.add_argument("--transition-layers", type=int, dest="transition_layers", metavar="N")
     p.add_argument("--wait-before-cure", type=float, dest="wait_before_cure_s", metavar="S")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("check", help="look for islands in sliced .goo files")
+    p.add_argument("files", nargs="+", help="sliced .goo files, or a folder of them")
+    p.add_argument("--min-px", type=int, default=10, help="ignore islands smaller than this many pixels (default 10)")
+    p.add_argument("--all", action="store_true", help="list every island instead of the 20 largest per file")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("config", help="show or change the user configuration")
@@ -229,6 +235,24 @@ def cmd_slice(ns, server):
         print(f"\ntotal: {_hms(total_s)}" + (f", {total_ml:.1f} ml of resin" if total_ml else ""))
 
 
+def cmd_check(ns, server):
+    import os
+    files = []
+    for f in ns.files:
+        files += [str(p) for p in server.slice_files({"plates_dir": f})] if os.path.isdir(f) else [f]
+    res = server.tool_check_slices({"file": files, "min_area_px": ns.min_px, "max_items": 10 ** 9 if ns.all else 20})
+    if ns.json:
+        return res
+    for r in res["checked"]:
+        print(f"{r['file']}: {r['layers']} layers, {r['islands']} islands of {ns.min_px} px or more"
+              + (f" ({r['islands_below_threshold']} smaller ones ignored)" if r["islands_below_threshold"] else ""))
+        for i in r["items"]:
+            print(f"   layer {i['layer']:>5}  z {i['z_mm']:7.2f} mm  {i['area_px']:>7} px  {i['area_mm2']:7.3f} mm2"
+                  f"   at x {i['x'][0]}-{i['x'][1]}, y {i['y'][0]}-{i['y'][1]}")
+        if r["islands"] > len(r["items"]):
+            print(f"   ... and {r['islands'] - len(r['items'])} more (use --all)")
+
+
 def cmd_config(ns, server):
     changes = {}
     if ns.printer:
@@ -265,7 +289,7 @@ def main(argv=None) -> int:
         server.main()
         return 0
     command = {"printers": cmd_printers, "resins": cmd_resins, "scan": cmd_scan, "arrange": cmd_arrange,
-               "export": cmd_export, "slice": cmd_slice, "config": cmd_config}[ns.command]
+               "export": cmd_export, "slice": cmd_slice, "check": cmd_check, "config": cmd_config}[ns.command]
     try:
         result = command(ns, server)
     except (ValueError, FileNotFoundError, RuntimeError) as exc:

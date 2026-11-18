@@ -13,7 +13,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from . import __version__, config as cfg, goo, nest
+from . import __version__, check, config as cfg, goo, nest
 
 
 def printer_from(args: dict, config: dict | None = None) -> dict:
@@ -193,6 +193,24 @@ TOOLS = [
             "required": ["plates_dir"],
         },
     },
+    {
+        "name": "check_slices",
+        "description": "Checks sliced .goo files for islands: regions of a layer with nothing under them, "
+                       "which cure in mid-resin and end up on the vat film or as blobs on the print. Returns, "
+                       "per file, the islands with layer, height, size and position. A whole 16K plate takes "
+                       "seconds. It reads the file as it is: it cannot tell whether supports will print.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file": {"description": "A sliced .goo file, or a list of them.",
+                         "anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+                "plates_dir": {"type": "string", "description": "Instead of file: a folder, to check every .goo in it."},
+                "min_area_px": {"type": "integer",
+                                "description": "Ignore islands smaller than this many pixels (default 10)."},
+                "max_items": {"type": "integer", "description": "Islands listed per file, largest first (default 50)."},
+            },
+        },
+    },
 ]
 
 
@@ -333,6 +351,38 @@ def tool_slice_plates(args):
             "format": fmt, "slicer": exe, "sliced": done}
 
 
+def slice_files(args) -> list:
+    """The sliced files a check call refers to: `file`, or every .goo of `plates_dir`."""
+    if args.get("file"):
+        files = [Path(f) for f in ([args["file"]] if isinstance(args["file"], str) else args["file"])]
+    elif args.get("plates_dir"):
+        files = sorted(Path(args["plates_dir"]).glob("*.goo"))
+        if not files:
+            raise ValueError(f"No .goo files in {args['plates_dir']}")
+    else:
+        raise ValueError("Pass \"file\" (a sliced .goo) or \"plates_dir\" (a folder of them).")
+    for f in files:
+        if not f.is_file():
+            raise FileNotFoundError(f"File not found: {f}")
+        if f.suffix.lower() != ".goo":
+            raise ValueError(f"Only .goo files can be checked for now: {f.name}")
+    return files
+
+
+def tool_check_slices(args):
+    min_px = int(args.get("min_area_px", 10))
+    limit = int(args.get("max_items", 50))
+    out = []
+    for f in slice_files(args):
+        res = check.check_file(f, workers=int(args["workers"]) if "workers" in args else None)
+        shown = [i for i in res["items"] if i["area_px"] >= min_px]
+        out.append({"file": str(f), "layers": res["layers"], "resolution_px": res["resolution_px"],
+                    "islands": len(shown), "islands_below_threshold": len(res["items"]) - len(shown),
+                    "largest_island_mm2": round(shown[0]["area_mm2"], 3) if shown else 0.0,
+                    "items": [{**i, "area_mm2": round(i["area_mm2"], 4)} for i in shown[:limit]]})
+    return {"min_area_px": min_px, "checked": out}
+
+
 HANDLERS = {
     "list_printers": tool_list_printers,
     "list_resins": tool_list_resins,
@@ -340,6 +390,7 @@ HANDLERS = {
     "arrange_plates": tool_arrange_plates,
     "export_plates": tool_export_plates,
     "slice_plates": tool_slice_plates,
+    "check_slices": tool_check_slices,
 }
 
 

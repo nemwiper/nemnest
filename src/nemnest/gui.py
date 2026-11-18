@@ -544,6 +544,8 @@ def main(argv=None) -> int:
 
         def done(value):
             result, sliced = value
+            if sliced:
+                state["sliced_dir"] = folder          # where "Check slices…" opens
             text = f"{result['plates_count']} plates written to\n{folder}"
             if sliced:
                 total = sum((s["profile_applied"] or {}).get("printing_time_s", 0) for s in sliced["sliced"])
@@ -560,6 +562,11 @@ def main(argv=None) -> int:
                 text += ".\nCheck the first layers in your usual slicer before the first print."
             messagebox.showinfo("nemnest", text)
         run("Slicing… this takes a few minutes" if slice_too else "Writing the plates…", work, done)
+
+    def check_slices():
+        """Look at a sliced file layer by layer and list its islands."""
+        from . import checkview
+        checkview.open_checker(root, start_dir=state.get("sliced_dir"))
 
     printer_var = tk.StringVar()
 
@@ -845,6 +852,7 @@ def main(argv=None) -> int:
     button("optimise", "Optimise…", optimise)
     button("export", "Export plates…", export)
     button("slice", "Export and slice…", lambda: export(slice_too=True))
+    button("check", "Check slices…", check_slices)
     ttk.Label(bar2, text="Printer").pack(side="left")
     combo = ttk.Combobox(bar2, textvariable=printer_var, values=list(printer_names()), state="readonly", width=34)
     combo.pack(side="left", padx=(6, 16))

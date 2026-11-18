@@ -103,6 +103,7 @@ A simple top view, one plate per screen, no 3D. Import STL files or a whole fold
 - After each import a short summary tells you how many parts were added and how many plates there are.
 - **Optimise** rearranges everything on as few plates as possible (rotation, height grouping and the minimum gap between parts are options; the gap, 0 to 20 mm, is remembered for next time, also by the command line and the MCP server), with a progress bar, the best result so far and a Cancel button that keeps the current layout.
 - **Export plates** writes the merged plate STLs, previews and `layout.json`; **Export and slice** also produces the print files.
+- **Check slices** looks for islands in a sliced file and shows its layers: see [Checking the slices](#checking-the-slices).
 - Pick the printer and the resin profile from the two lists. **Printers and resins** opens both side by side: add, edit or delete your own printers and your [resin profiles](#resin-profiles).
 
 Drag and drop needs one small extra package: `pip install "nemnest[gui] @ git+https://github.com/nemwiper/nemnest"`, or just `pip install tkinterdnd2`. Without it the window works the same, with the buttons only.
@@ -200,6 +201,20 @@ nemnest arrange ./supported --plate-size 218.88 122.88 260
 To add a printer properly, copy [the Saturn profile](src/nemnest/printers/elegoo-saturn-4-ultra-16k.json) into your user printers folder (shown by `nemnest printers`), change name, `size_mm`, `resolution_px` and the slicing defaults, then select it with `nemnest config --printer your-id`. The `goo_profile` block holds the `.goo` metadata the manufacturer's slicer writes for that machine (mirroring, per-layer settings, the seconds of mechanical motion per layer used for the time estimate); the reliable way to fill it is to slice the same plate with the manufacturer's slicer and compare.
 
 Profiles verified on real prints are very welcome as pull requests. Please say in the PR what you printed and with which firmware.
+
+## Checking the slices
+
+```bash
+nemnest check ./plates
+```
+
+Looks through sliced `.goo` files for **islands**: regions of a layer with nothing under them. An island cures in mid-resin and ends up stuck to the vat film, or as a blob on the print. Each one is listed with its layer, height, size in pixels and mm², and position.
+
+In the window, **Check slices** opens a layer viewer: the islands are listed largest first, choosing one jumps to its layer and zooms on it, and the mouse wheel or the arrows move through the layers. What has something underneath is grey, what has nothing under it is orange.
+
+It works on the runs the file stores instead of rebuilding each layer image, so a whole 16K plate of about 3000 layers takes around 5 seconds on 6 cores. Islands of a few pixels are slicing noise: by default those under 10 pixels are hidden.
+
+What it cannot tell: whether a support will actually print. A part that depends on a tall thin support is not an island in the file, and is not reported.
 
 ## Resin profiles
 
